@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 
 type Transaction = {
   id: number;
@@ -9,135 +9,90 @@ type Transaction = {
   amount: number;
 };
 
-type Investment = {
-  id: number;
-  name: string;
-  amount: number;
-};
-
 type FinanceData = {
   balance: number;
   initialBalance: number;
+  weeklyBudgetTarget: number;
   transactions: Transaction[];
-  investments: Investment[];
 };
 
+const CATEGORY_ICONS: Record<string, string> = {
+  Makan: "🍜",
+  Jajan: "🧋",
+  Transport: "🚌",
+  Bensin: "⛽",
+  "Kuota/Pulsa": "📱",
+  "Kebutuhan Rumah": "🏠",
+};
+
+function getCategoryIcon(cat: string) {
+  return CATEGORY_ICONS[cat] ?? "💸";
+}
+
 export default function Page() {
+  const [mounted, setMounted] = useState(false);
   const [data, setData] = useState<FinanceData | null>(null);
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("Makan");
-  const [investmentName, setInvestmentName] = useState("");
-  const [investmentAmount, setInvestmentAmount] = useState("");
+  const [category, setCategory] = useState("");
+  const [initBalance, setInitBalance] = useState("");
+  const [initWeeklyBudget, setInitWeeklyBudget] = useState("");
+  const [balanceAnim, setBalanceAnim] = useState(false);
+  const prevBalance = useRef<number | null>(null);
 
-  // LOAD DATA SAFE
+  useEffect(() => { setMounted(true); }, []);
+
   useEffect(() => {
+    if (!mounted) return;
     const stored = localStorage.getItem("finance-data");
-
     if (stored) {
       const parsed = JSON.parse(stored);
-
       setData({
         balance: parsed.balance ?? 0,
         initialBalance: parsed.initialBalance ?? parsed.balance ?? 0,
+        weeklyBudgetTarget: parsed.weeklyBudgetTarget ?? Math.floor((parsed.initialBalance ?? 0) / 4),
         transactions: parsed.transactions ?? [],
-        investments: parsed.investments ?? [],
       });
     }
-  }, []);
+  }, [mounted]);
 
-  // SAVE DATA
   useEffect(() => {
     if (data) {
       localStorage.setItem("finance-data", JSON.stringify(data));
+      if (prevBalance.current !== null && prevBalance.current !== data.balance) {
+        setBalanceAnim(true);
+        setTimeout(() => setBalanceAnim(false), 400);
+      }
+      prevBalance.current = data.balance;
     }
   }, [data]);
 
-  const handleSetBalance = (value: number) => {
-    setData({
-      balance: value,
-      initialBalance: value,
-      transactions: [],
-      investments: [],
-    });
+  const handleSetSetup = () => {
+    const balanceNum = Number(initBalance);
+    if (!balanceNum || balanceNum <= 0) { alert("Masukkan saldo awal yang valid!"); return; }
+    const weeklyNum = initWeeklyBudget ? Number(initWeeklyBudget) : Math.floor(balanceNum / 4);
+    setData({ balance: balanceNum, initialBalance: balanceNum, weeklyBudgetTarget: weeklyNum, transactions: [] });
   };
 
   const handleAddTransaction = () => {
-    if (!data || !amount) return;
-
+    if (!data || !amount || !category) { alert("Mohon isi nominal dan kategori!"); return; }
     const newAmount = parseInt(amount);
-    if (newAmount > data.balance) {
-      alert("Saldo tidak cukup!");
-      return;
-    }
-
-    const newTx: Transaction = {
-      id: Date.now(),
-      date: new Date().toLocaleDateString(),
-      category,
-      amount: newAmount,
-    };
-
-    setData({
-      ...data,
-      balance: data.balance - newAmount,
-      transactions: [newTx, ...data.transactions],
-    });
-
-    setAmount("");
-  };
-
-  const handleAddInvestment = () => {
-    if (!data || !investmentAmount || !investmentName) return;
-
-    const amt = parseInt(investmentAmount);
-    if (amt > data.balance) {
-      alert("Saldo tidak cukup!");
-      return;
-    }
-
-    const newInv: Investment = {
-      id: Date.now(),
-      name: investmentName,
-      amount: amt,
-    };
-
-    setData({
-      ...data,
-      balance: data.balance - amt,
-      investments: [...data.investments, newInv],
-    });
-
-    setInvestmentAmount("");
-    setInvestmentName("");
+    if (newAmount > data.balance) { alert("Saldo total tidak cukup!"); return; }
+    const newTx: Transaction = { id: Date.now(), date: new Date().toLocaleDateString("id-ID"), category, amount: newAmount };
+    setData({ ...data, balance: data.balance - newAmount, transactions: [newTx, ...data.transactions] });
+    setAmount(""); setCategory("");
   };
 
   const handleReset = () => {
-    const confirmReset = confirm(
-      "Yakin mau reset semua data? Ini tidak bisa dikembalikan."
-    );
-
-    if (confirmReset) {
+    if (confirm("Yakin mau reset semua data? Ini tidak bisa dikembalikan.")) {
       localStorage.removeItem("finance-data");
-      setData(null);
+      setData(null); setInitBalance(""); setInitWeeklyBudget("");
     }
   };
 
   const exportCSV = () => {
     if (!data) return;
-
-    const rows = [
-      ["Tanggal", "Kategori", "Jumlah"],
-      ...data.transactions.map((tx) => [
-        tx.date,
-        tx.category,
-        tx.amount,
-      ]),
-    ];
-
-    const csvContent =
-      "data:text/csv;charset=utf-8," +
-      rows.map((e) => e.join(",")).join("\n");
-
+    const rows = [["Tanggal", "Kategori", "Jumlah"], ...data.transactions.map((tx) => [tx.date, tx.category, tx.amount])];
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map((e) => e.join(",")).join("\n");
     const link = document.createElement("a");
     link.setAttribute("href", encodeURI(csvContent));
     link.setAttribute("download", "transaksi.csv");
@@ -145,194 +100,706 @@ export default function Page() {
     link.click();
   };
 
-  if (!data) {
+  // ---- LOADING ----
+  if (!mounted) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-black text-white">
-        <div className="p-8 bg-white/5 rounded-2xl border border-white/10">
-          <h1 className="mb-4 text-lg">Masukkan Saldo Awal</h1>
-          <input
-            type="number"
-            placeholder="Contoh: 1300000"
-            className="p-3 bg-black border border-white/20 rounded-lg"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                handleSetBalance(
-                  Number((e.target as HTMLInputElement).value)
-                );
-              }
-            }}
-          />
+      <main style={styles.root}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 14, letterSpacing: "0.08em" }}>Loading...</span>
         </div>
       </main>
     );
   }
 
-  const weeklyBudget = Math.floor(data.initialBalance / 4);
-  const totalSpent = data.initialBalance - data.balance;
-  const percentLeft =
-    (data.balance / data.initialBalance) * 100;
+  // ---- SETUP SCREEN ----
+  if (!data) {
+    return (
+      <>
+        <style>{globalStyles}</style>
+        <main style={styles.root}>
+          <div style={styles.grain} />
+          <div style={styles.radialOrb} />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: "24px", animation: "fadeIn 0.5s ease" }}>
+            <div style={styles.setupCard}>
+              <div style={{ marginBottom: 32 }}>
+                <p style={styles.setupEyebrow}>Personal Finance</p>
+                <h1 style={styles.setupTitle}>Set up your wallet.</h1>
+                <p style={styles.setupSub}>A few details to get started.</p>
+              </div>
 
-  const weeklySpent = totalSpent % weeklyBudget;
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>Monthly Balance</label>
+                <input
+                  type="number"
+                  placeholder="e.g. 3,000,000"
+                  value={initBalance}
+                  onChange={(e) => setInitBalance(e.target.value)}
+                  style={styles.input}
+                  onFocus={e => Object.assign(e.currentTarget.style, styles.inputFocus)}
+                  onBlur={e => Object.assign(e.currentTarget.style, styles.inputBlur)}
+                />
+              </div>
 
+              <div style={styles.fieldGroup}>
+                <label style={styles.label}>
+                  Weekly Budget Target <span style={{ color: "rgba(255,255,255,0.3)", fontWeight: 400 }}>— optional</span>
+                </label>
+                <input
+                  type="number"
+                  placeholder="Leave blank to auto-split ÷4"
+                  value={initWeeklyBudget}
+                  onChange={(e) => setInitWeeklyBudget(e.target.value)}
+                  style={styles.input}
+                  onFocus={e => Object.assign(e.currentTarget.style, styles.inputFocus)}
+                  onBlur={e => Object.assign(e.currentTarget.style, styles.inputBlur)}
+                />
+              </div>
+
+              <button
+                onClick={handleSetSetup}
+                style={styles.primaryBtn}
+                onMouseEnter={e => (e.currentTarget.style.opacity = "0.9")}
+                onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+              >
+                Get Started
+              </button>
+            </div>
+          </div>
+        </main>
+      </>
+    );
+  }
+
+  // ---- WEEKLY LOGIC ----
+  const now = new Date();
+  const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
+  const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek).setHours(0, 0, 0, 0);
+  const weeklyBudget = data.weeklyBudgetTarget;
+  const weeklySpent = data.transactions.filter((tx) => tx.id >= startOfWeek).reduce((sum, tx) => sum + tx.amount, 0);
+  const weeklyLeft = weeklyBudget - weeklySpent;
+  const weeklyPercentLeft = Math.max(0, Math.min(100, (weeklyLeft / weeklyBudget) * 100));
+  const isOverBudget = weeklyLeft < 0;
+  const isDanger = weeklyPercentLeft < 25;
+
+  // ---- MAIN DASHBOARD ----
   return (
-    <main className="min-h-screen bg-black text-white p-6">
-      <div className="max-w-4xl mx-auto space-y-8">
+    <>
+      <style>{globalStyles}</style>
+      <main style={styles.root}>
+        <div style={styles.grain} />
+        <div style={styles.radialOrb} />
 
-        <h1 className="text-3xl font-bold">Smart Finance Dashboard</h1>
-
-        {/* BALANCE */}
-        <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-          <p className="text-gray-400">Saldo Tersisa</p>
-          <h2 className="text-2xl font-semibold">
-            Rp {data.balance.toLocaleString()}
-          </h2>
-
-          {/* PROGRESS BAR */}
-          <div className="mt-4 h-3 bg-white/10 rounded-full">
-            <div
-              className="h-3 rounded-full bg-green-500"
-              style={{ width: `${percentLeft}%` }}
-            />
+        <div style={styles.container}>
+          {/* HEADER */}
+          <div style={{ animation: "fadeSlideUp 0.5s ease both", animationDelay: "0s" }}>
+            <div style={styles.headerRow}>
+              <div>
+                <p style={styles.eyebrow}>My Money</p>
+                <h1 style={styles.mainTitle}>Wealth Overview</h1>
+              </div>
+              <div style={styles.liveChip}>
+                <span style={styles.liveDot} />
+                Live
+              </div>
+            </div>
           </div>
 
-          {percentLeft < 20 && (
-            <p className="text-red-400 mt-2 text-sm">
-              ⚠ Saldo hampir habis!
-            </p>
-          )}
+          {/* BALANCE CARD */}
+          <div
+            style={{ ...styles.card, animation: "fadeSlideUp 0.5s ease both", animationDelay: "0.07s" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0px)")}
+          >
+            <div style={styles.balanceHeader}>
+              <div>
+                <p style={styles.cardEyebrow}>Available Balance</p>
+                <p style={styles.cardMeta}>Updated just now</p>
+              </div>
+              <div style={styles.balancePill}>
+                {((data.balance / data.initialBalance) * 100).toFixed(0)}% remaining
+              </div>
+            </div>
 
-          <p className="mt-3 text-sm text-gray-400">
-            Budget Mingguan: Rp {weeklyBudget.toLocaleString()}
-          </p>
+            <div style={{ ...styles.balanceNumber, ...(balanceAnim ? styles.balanceNumberAnim : {}) }}>
+              <span style={styles.balanceCurrency}>Rp</span>
+              {data.balance.toLocaleString("id-ID")}
+            </div>
 
-          {weeklySpent > weeklyBudget && (
-            <p className="text-red-400 text-sm mt-2">
-              ⚠ Over budget minggu ini!
-            </p>
-          )}
-        </div>
+            <div style={styles.divider} />
 
-        {/* ADD TRANSACTION */}
-        <div className="p-6 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-          <h2 className="font-semibold">Tambah Pengeluaran</h2>
-          <div className="flex gap-3 flex-wrap">
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="p-2 bg-black border border-white/20 rounded"
-            >
-              <option>Makan</option>
-              <option>Jajan</option>
-              <option>Kuota</option>
-              <option>Sabun</option>
-              <option>Lainnya</option>
-            </select>
+            {/* WEEKLY BUDGET */}
+            <div>
+              <div style={styles.budgetRow}>
+                <span style={styles.budgetLabel}>This Week</span>
+                <span style={{ ...styles.budgetAmount, color: isOverBudget ? "#FF6B6B" : "rgba(255,255,255,0.9)" }}>
+                  Rp {weeklyLeft.toLocaleString("id-ID")} left
+                </span>
+              </div>
 
-            <input
-              type="number"
-              placeholder="Nominal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="p-2 bg-black border border-white/20 rounded"
-            />
+              {/* PROGRESS TRACK */}
+              <div style={styles.progressTrack}>
+                <div style={{
+                  ...styles.progressFill,
+                  width: `${isOverBudget ? 100 : weeklyPercentLeft}%`,
+                  background: isOverBudget
+                    ? "linear-gradient(90deg, #FF6B6B, #FF8E8E)"
+                    : isDanger
+                      ? "linear-gradient(90deg, #FF9A3C, #FFB574)"
+                      : "linear-gradient(90deg, #7C5CFF, #B983FF)",
+                  boxShadow: isOverBudget
+                    ? "0 0 20px rgba(255,107,107,0.35)"
+                    : isDanger
+                      ? "0 0 20px rgba(255,154,60,0.35)"
+                      : "0 0 20px rgba(124,92,255,0.35)",
+                }} />
+              </div>
 
-            <button
-              onClick={handleAddTransaction}
-              className="px-4 py-2 bg-white text-black rounded"
-            >
-              Tambah
-            </button>
-          </div>
-        </div>
+              <div style={styles.budgetMeta}>
+                <span>Spent: Rp {weeklySpent.toLocaleString("id-ID")}</span>
+                <span>Limit: Rp {weeklyBudget.toLocaleString("id-ID")}</span>
+              </div>
 
-        {/* HISTORY */}
-        <div className="p-6 bg-white/5 rounded-2xl border border-white/10">
-          <h2 className="font-semibold mb-4">Riwayat Transaksi</h2>
-
-          {data.transactions.length === 0 ? (
-            <p className="text-gray-500 text-sm">
-              Belum ada transaksi
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {data.transactions.map((tx) => (
-                <div
-                  key={tx.id}
-                  className="flex justify-between bg-black/40 p-3 rounded-lg"
-                >
-                  <div>
-                    <p>{tx.category}</p>
-                    <p className="text-xs text-gray-500">
-                      {tx.date}
-                    </p>
-                  </div>
-                  <p className="text-red-400">
-                    - Rp {tx.amount.toLocaleString()}
-                  </p>
+              {isOverBudget && (
+                <div style={styles.overBudgetBanner}>
+                  <span>⚠</span>
+                  <span>You've exceeded your weekly limit</span>
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
-
-        {/* INVESTMENT */}
-        <div className="p-6 bg-white/5 rounded-2xl border border-white/10 space-y-4">
-          <h2 className="font-semibold">Investasi</h2>
-
-          <div className="flex gap-3 flex-wrap">
-            <input
-              type="text"
-              placeholder="Nama investasi"
-              value={investmentName}
-              onChange={(e) =>
-                setInvestmentName(e.target.value)
-              }
-              className="p-2 bg-black border border-white/20 rounded"
-            />
-
-            <input
-              type="number"
-              placeholder="Nominal"
-              value={investmentAmount}
-              onChange={(e) =>
-                setInvestmentAmount(e.target.value)
-              }
-              className="p-2 bg-black border border-white/20 rounded"
-            />
-
-            <button
-              onClick={handleAddInvestment}
-              className="px-4 py-2 bg-green-500 text-black rounded"
-            >
-              Tambah
-            </button>
           </div>
 
-          {data.investments.map((inv) => (
-            <div key={inv.id}>
-              {inv.name} - Rp {inv.amount.toLocaleString()}
+          {/* ADD EXPENSE */}
+          <div
+            style={{ ...styles.card, animation: "fadeSlideUp 0.5s ease both", animationDelay: "0.14s" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0px)")}
+          >
+            <p style={styles.sectionTitle}>Add Expense</p>
+            <div style={styles.inputRow}>
+              <input
+                type="text"
+                list="category-options"
+                placeholder="Category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                style={{ ...styles.input, flex: 1 }}
+                onFocus={e => Object.assign(e.currentTarget.style, styles.inputFocus)}
+                onBlur={e => Object.assign(e.currentTarget.style, styles.inputBlur)}
+              />
+              <datalist id="category-options">
+                <option value="Makan" /><option value="Jajan" /><option value="Transport" />
+                <option value="Bensin" /><option value="Kuota/Pulsa" /><option value="Kebutuhan Rumah" />
+              </datalist>
+
+              <input
+                type="number"
+                placeholder="Amount (Rp)"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                style={{ ...styles.input, flex: 1 }}
+                onFocus={e => Object.assign(e.currentTarget.style, styles.inputFocus)}
+                onBlur={e => Object.assign(e.currentTarget.style, styles.inputBlur)}
+              />
+
+              <button
+                onClick={handleAddTransaction}
+                style={styles.addBtn}
+                onMouseEnter={e => (e.currentTarget.style.opacity = "0.85")}
+                onMouseLeave={e => (e.currentTarget.style.opacity = "1")}
+              >
+                Add
+              </button>
             </div>
-          ))}
-        </div>
+          </div>
 
-        {/* EXPORT & RESET */}
-        <div className="flex gap-4">
-          <button
-            onClick={exportCSV}
-            className="px-6 py-3 bg-blue-500 rounded"
+          {/* TRANSACTIONS */}
+          <div
+            style={{ ...styles.card, animation: "fadeSlideUp 0.5s ease both", animationDelay: "0.21s" }}
+            onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-2px)")}
+            onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0px)")}
           >
-            Export CSV
-          </button>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <p style={styles.sectionTitle}>Activity</p>
+              {data.transactions.length > 0 && (
+                <span style={styles.txCount}>{data.transactions.length} entries</span>
+              )}
+            </div>
 
-          <button
-            onClick={handleReset}
-            className="px-6 py-3 bg-red-600 rounded"
-          >
-            Reset
-          </button>
+            {data.transactions.length === 0 ? (
+              <div style={styles.emptyState}>
+                <span style={{ fontSize: 28 }}>🪞</span>
+                <p>No transactions yet.</p>
+                <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Add one above to get started.</p>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {data.transactions.map((tx, i) => (
+                  <div
+                    key={tx.id}
+                    style={{ ...styles.txItem, animationDelay: `${i * 0.04}s` }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.06)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.03)")}
+                  >
+                    <div style={styles.txLeft}>
+                      <div style={styles.txIcon}>{getCategoryIcon(tx.category)}</div>
+                      <div>
+                        <p style={styles.txCategory}>{tx.category}</p>
+                        <p style={styles.txDate}>{tx.date}</p>
+                      </div>
+                    </div>
+                    <p style={styles.txAmount}>− Rp {tx.amount.toLocaleString("id-ID")}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* FOOTER ACTIONS */}
+          <div style={{ ...styles.footerRow, animation: "fadeSlideUp 0.5s ease both", animationDelay: "0.28s" }}>
+            <button
+              onClick={exportCSV}
+              style={styles.ghostBtn}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,255,255,0.08)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,255,255,0.04)")}
+            >
+              Export CSV
+            </button>
+            <button
+              onClick={handleReset}
+              style={styles.dangerBtn}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,107,107,0.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "rgba(255,107,107,0.07)")}
+            >
+              Reset Data
+            </button>
+          </div>
         </div>
-
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
+
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+
+const globalStyles = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes fadeSlideUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes scalePop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.025); }
+    100% { transform: scale(1); }
+  }
+  @keyframes pulseDot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input::placeholder { color: rgba(255,255,255,0.22); }
+`;
+
+const styles: Record<string, React.CSSProperties> = {
+  root: {
+    minHeight: "100vh",
+    background: "#0B0B0F",
+    fontFamily: "'DM Sans', sans-serif",
+    color: "#FFFFFF",
+    position: "relative",
+    overflow: "hidden",
+  },
+  grain: {
+    position: "fixed",
+    inset: 0,
+    backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E")`,
+    opacity: 0.5,
+    pointerEvents: "none",
+    zIndex: 0,
+  },
+  radialOrb: {
+    position: "fixed",
+    top: "-20%",
+    left: "50%",
+    transform: "translateX(-50%)",
+    width: "80vw",
+    height: "60vh",
+    background: "radial-gradient(ellipse at center, rgba(124,92,255,0.07) 0%, transparent 70%)",
+    pointerEvents: "none",
+    zIndex: 0,
+  },
+  container: {
+    position: "relative",
+    zIndex: 1,
+    maxWidth: 600,
+    margin: "0 auto",
+    padding: "48px 20px 80px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+    marginBottom: 8,
+  },
+  eyebrow: {
+    fontSize: 12,
+    fontWeight: 500,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase" as const,
+    color: "rgba(255,255,255,0.35)",
+    marginBottom: 4,
+  },
+  mainTitle: {
+    fontSize: 38,
+    fontWeight: 600,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.1,
+    color: "#FFFFFF",
+  },
+  liveChip: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "6px 12px",
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 99,
+    fontSize: 12,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.5)",
+    letterSpacing: "0.04em",
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: "50%",
+    background: "#7C5CFF",
+    animation: "pulseDot 2s ease infinite",
+    display: "inline-block",
+  },
+  card: {
+    background: "rgba(255,255,255,0.04)",
+    backdropFilter: "blur(20px)",
+    WebkitBackdropFilter: "blur(20px)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 24,
+    padding: "28px 28px",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
+    transition: "transform 0.2s ease, box-shadow 0.2s ease",
+  },
+  balanceHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
+  },
+  cardEyebrow: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.45)",
+    marginBottom: 2,
+  },
+  cardMeta: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.25)",
+    letterSpacing: "0.03em",
+  },
+  balancePill: {
+    background: "rgba(124,92,255,0.12)",
+    border: "1px solid rgba(124,92,255,0.2)",
+    color: "#B983FF",
+    borderRadius: 99,
+    padding: "4px 12px",
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: "0.02em",
+  },
+  balanceNumber: {
+    fontSize: 52,
+    fontWeight: 700,
+    letterSpacing: "-0.02em",
+    lineHeight: 1,
+    marginBottom: 24,
+    transition: "transform 0.3s ease",
+  },
+  balanceNumberAnim: {
+    animation: "scalePop 0.35s ease",
+  },
+  balanceCurrency: {
+    fontSize: 22,
+    fontWeight: 500,
+    marginRight: 6,
+    color: "rgba(255,255,255,0.5)",
+    verticalAlign: "middle",
+  },
+  divider: {
+    height: 1,
+    background: "rgba(255,255,255,0.06)",
+    marginBottom: 24,
+  },
+  budgetRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  budgetLabel: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.6)",
+  },
+  budgetAmount: {
+    fontSize: 14,
+    fontWeight: 600,
+    letterSpacing: "-0.01em",
+  },
+  progressTrack: {
+    height: 8,
+    background: "rgba(255,255,255,0.07)",
+    borderRadius: 99,
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  progressFill: {
+    height: "100%",
+    borderRadius: 99,
+    transition: "width 0.6s cubic-bezier(0.4, 0, 0.2, 1)",
+  },
+  budgetMeta: {
+    display: "flex",
+    justifyContent: "space-between",
+    fontSize: 11,
+    color: "rgba(255,255,255,0.28)",
+    letterSpacing: "0.02em",
+  },
+  overBudgetBanner: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginTop: 14,
+    padding: "10px 14px",
+    background: "rgba(255,107,107,0.08)",
+    border: "1px solid rgba(255,107,107,0.18)",
+    borderRadius: 12,
+    fontSize: 12,
+    color: "#FF9090",
+    fontWeight: 500,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.85)",
+    marginBottom: 16,
+    letterSpacing: "-0.01em",
+  },
+  inputRow: {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap" as const,
+    alignItems: "center",
+  },
+  fieldGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    display: "block",
+    fontSize: 12,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.4)",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase" as const,
+    marginBottom: 8,
+  },
+  input: {
+    background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.09)",
+    borderRadius: 14,
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontFamily: "'DM Sans', sans-serif",
+    fontWeight: 400,
+    padding: "12px 16px",
+    outline: "none",
+    transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+    width: "100%",
+  },
+  inputFocus: {
+    borderColor: "rgba(124,92,255,0.6)",
+    boxShadow: "0 0 0 4px rgba(124,92,255,0.12)",
+    background: "rgba(124,92,255,0.06)",
+  },
+  inputBlur: {
+    borderColor: "rgba(255,255,255,0.09)",
+    boxShadow: "none",
+    background: "rgba(255,255,255,0.05)",
+  },
+  addBtn: {
+    background: "linear-gradient(135deg, #7C5CFF 0%, #B983FF 100%)",
+    color: "#FFFFFF",
+    border: "none",
+    borderRadius: 14,
+    padding: "12px 28px",
+    fontSize: 14,
+    fontWeight: 600,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+    transition: "opacity 0.2s ease",
+    letterSpacing: "-0.01em",
+    whiteSpace: "nowrap" as const,
+  },
+  primaryBtn: {
+    width: "100%",
+    background: "linear-gradient(135deg, #7C5CFF 0%, #B983FF 100%)",
+    color: "#FFFFFF",
+    border: "none",
+    borderRadius: 14,
+    padding: "15px 24px",
+    fontSize: 15,
+    fontWeight: 600,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+    transition: "opacity 0.2s ease",
+    letterSpacing: "-0.01em",
+    marginTop: 8,
+  },
+  txItem: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "14px 16px",
+    background: "rgba(255,255,255,0.03)",
+    border: "1px solid rgba(255,255,255,0.05)",
+    borderRadius: 18,
+    cursor: "default",
+    transition: "background 0.15s ease",
+    animation: "fadeSlideUp 0.4s ease both",
+  },
+  txLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  txIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    background: "rgba(255,255,255,0.06)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 17,
+    flexShrink: 0,
+  },
+  txCategory: {
+    fontSize: 14,
+    fontWeight: 500,
+    color: "rgba(255,255,255,0.85)",
+    letterSpacing: "-0.01em",
+  },
+  txDate: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.3)",
+    marginTop: 2,
+    letterSpacing: "0.02em",
+  },
+  txAmount: {
+    fontSize: 15,
+    fontWeight: 600,
+    color: "#FF8E8E",
+    letterSpacing: "-0.01em",
+  },
+  txCount: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.3)",
+    letterSpacing: "0.04em",
+    background: "rgba(255,255,255,0.05)",
+    padding: "3px 10px",
+    borderRadius: 99,
+  },
+  emptyState: {
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    gap: 8,
+    padding: "32px 0",
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 14,
+    textAlign: "center" as const,
+  },
+  footerRow: {
+    display: "flex",
+    gap: 10,
+    paddingTop: 8,
+  },
+  ghostBtn: {
+    flex: 1,
+    padding: "12px 20px",
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 14,
+    color: "rgba(255,255,255,0.55)",
+    fontSize: 13,
+    fontWeight: 500,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+    transition: "background 0.2s ease",
+    letterSpacing: "-0.01em",
+  },
+  dangerBtn: {
+    flex: 1,
+    padding: "12px 20px",
+    background: "rgba(255,107,107,0.07)",
+    border: "1px solid rgba(255,107,107,0.12)",
+    borderRadius: 14,
+    color: "#FF8E8E",
+    fontSize: 13,
+    fontWeight: 500,
+    fontFamily: "'DM Sans', sans-serif",
+    cursor: "pointer",
+    transition: "background 0.2s ease",
+    letterSpacing: "-0.01em",
+  },
+  setupCard: {
+    background: "rgba(255,255,255,0.04)",
+    backdropFilter: "blur(20px)",
+    WebkitBackdropFilter: "blur(20px)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 28,
+    padding: "40px 36px",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.6)",
+    width: "100%",
+    maxWidth: 440,
+  },
+  setupEyebrow: {
+    fontSize: 11,
+    fontWeight: 500,
+    letterSpacing: "0.14em",
+    textTransform: "uppercase" as const,
+    color: "#B983FF",
+    marginBottom: 10,
+  },
+  setupTitle: {
+    fontSize: 34,
+    fontWeight: 700,
+    letterSpacing: "-0.02em",
+    lineHeight: 1.1,
+    marginBottom: 8,
+  },
+  setupSub: {
+    fontSize: 14,
+    color: "rgba(255,255,255,0.38)",
+    fontWeight: 400,
+  },
+};
