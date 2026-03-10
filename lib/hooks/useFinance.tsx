@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { getCycleStartDate } from "@/lib/utils";
 
 export type Transaction = {
     id: number;
@@ -92,9 +93,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const checkMonthlyReset = (currentData: FinanceData) => {
         const lastReset = new Date(currentData.lastResetDate);
         const now = new Date();
+        const currentCycleStart = getCycleStartDate(now);
 
-        // Check if we entered a new month
-        if (now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+        // Check if we entered a new cycle (month starting on the 3rd)
+        if (lastReset < currentCycleStart) {
             // Auto run monthly reset
             triggerMonthlyReset();
         }

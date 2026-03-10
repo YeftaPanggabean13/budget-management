@@ -95,7 +95,7 @@ export function InsightsPanel() {
 
     // Calculate smart insights
     const insights = [];
-    
+
     if (weeklyPercentage > 100) {
         insights.push({
             icon: AlertCircle,
@@ -145,6 +145,35 @@ export function InsightsPanel() {
             type: "info",
             text: `${topCategory.name} is ${topCategoryPercentage}% of spending`,
             color: getCategoryColor(topCategory.name).bg
+        });
+    }
+
+    // Daily Allowance Insights
+    const dailyAllowance = Math.floor(data.weeklyBudgetTarget / 7);
+    const spentToday = data.transactions
+        .filter(tx => isSameDay(parseISO(tx.date), new Date()))
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+    if (spentToday > dailyAllowance && dailyAllowance > 0) {
+        insights.unshift({
+            icon: AlertCircle,
+            type: "danger",
+            text: `Kamu sudah melewati jatah harian (Over Rp ${(spentToday - dailyAllowance).toLocaleString("id-ID")})`,
+            color: "#FF6B6B"
+        });
+    } else if (spentToday > dailyAllowance * 0.8 && dailyAllowance > 0) {
+        insights.unshift({
+            icon: Zap,
+            type: "warning",
+            text: "Hampir mencapai batas jatah harian. Hemat sisa hari ini!",
+            color: "#FFB043"
+        });
+    } else if (spentToday === 0 && dailyAllowance > 0) {
+        insights.unshift({
+            icon: Zap,
+            type: "success",
+            text: `Belum ada pengeluaran hari ini. Jatah aman: Rp ${dailyAllowance.toLocaleString("id-ID")}`,
+            color: "#4ECDC4"
         });
     }
 

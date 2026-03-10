@@ -1,6 +1,8 @@
 import { useFinance } from "@/lib/hooks/useFinance";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
+import { calculateDailyAllowance, getSpentToday, getWeeklyCycleStartDate } from "@/lib/utils";
+import { Zap, AlertCircle } from "lucide-react";
 
 export function BalanceCard() {
     const { data } = useFinance();
@@ -8,7 +10,7 @@ export function BalanceCard() {
 
     useEffect(() => {
         if (!data) return;
-        
+
         const start = displayBalance;
         const end = data.balance;
         const duration = 1000;
@@ -22,7 +24,7 @@ export function BalanceCard() {
             const progress = Math.min(currentStep / steps, 1);
             const easeOutValue = 1 - Math.pow(1 - progress, 3);
             setDisplayBalance(Math.floor(start + difference * easeOutValue));
-            
+
             if (currentStep >= steps) {
                 clearInterval(interval);
                 setDisplayBalance(end);
@@ -37,6 +39,19 @@ export function BalanceCard() {
     const percentage = ((data.balance / data.initialBalance) * 100).toFixed(0);
     const spent = data.initialBalance - data.balance;
     const spentPercentage = ((spent / data.initialBalance) * 100).toFixed(1);
+
+    // Daily Allowance Logic
+    const startOfCurrentWeek = getWeeklyCycleStartDate().getTime();
+
+    const weeklySpent = data.transactions
+        .filter((tx) => new Date(tx.date).getTime() >= startOfCurrentWeek)
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+    const remainingWeeklyBudget = Math.max(0, data.weeklyBudgetTarget - weeklySpent);
+    const dailyAllowance = calculateDailyAllowance(remainingWeeklyBudget, 'week');
+    const spentToday = getSpentToday(data.transactions);
+    const remainingToday = dailyAllowance - spentToday;
+    const isOverspentToday = remainingToday < 0;
 
     return (
         <motion.div
@@ -60,10 +75,49 @@ export function BalanceCard() {
                 <span className="text-2xl font-medium text-white/50 mr-2 align-middle">Rp</span>
                 {displayBalance.toLocaleString("id-ID")}
             </div>
-            
+
             <p className="text-xs text-white/30 mb-6 tracking-wide">
                 Spent {spentPercentage}% of total budget
             </p>
+
+            {/* Daily Allowance Section */}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 mb-6 relative overflow-hidden group">
+                <div className="relative z-10 flex justify-between items-center">
+                    <div>
+                        <p className="text-[11px] font-semibold text-white/40 uppercase tracking-[0.1em] mb-1.5 flex items-center gap-2">
+                            <Zap size={12} className="text-[#B983FF]" />
+                            Jatah Hari Ini
+                        </p>
+                        <div className="flex items-baseline gap-2">
+                            <p className={`text-2xl font-bold tracking-tight ${isOverspentToday ? 'text-[#FF8E8E]' : 'text-white/90'}`}>
+                                Rp {Math.abs(remainingToday).toLocaleString("id-ID")}
+                            </p>
+                            <span className="text-[11px] text-white/30 font-medium">/{dailyAllowance.toLocaleString("id-ID")}</span>
+                        </div>
+                        <p className={`text-[11px] mt-1.5 font-medium ${isOverspentToday ? 'text-[#FF8E8E]/80' : 'text-white/40'}`}>
+                            {isOverspentToday
+                                ? "Kamu overspend hari ini!"
+                                : `Rp ${remainingToday.toLocaleString("id-ID")} sisa jatah aman hari ini`}
+                        </p>
+                    </div>
+                    {isOverspentToday && (
+                        <div className="bg-[#FF6B6B]/20 p-2 rounded-xl border border-[#FF6B6B]/30 animate-pulse">
+                            <AlertCircle size={20} className="text-[#FF8E8E]" />
+                        </div>
+                    )}
+                </div>
+
+                {/* Progress bar for today */}
+                {!isOverspentToday && dailyAllowance > 0 && (
+                    <div className="absolute bottom-0 left-0 h-1 bg-white/5 w-full">
+                        <motion.div
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min(100, (spentToday / dailyAllowance) * 100)}%` }}
+                            className="h-full bg-gradient-to-r from-[#7C5CFF] to-[#B983FF]"
+                        />
+                    </div>
+                )}
+            </div>
 
             <div className="h-px bg-white/5 mb-6" />
 
