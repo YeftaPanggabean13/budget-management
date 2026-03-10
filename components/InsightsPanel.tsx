@@ -6,7 +6,7 @@ import { format, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, startOf
 import { TrendingUp, AlertCircle, Zap, ChevronRight, ChevronDown, Coins, TrendingDown, Landmark } from "lucide-react";
 
 import { useState } from "react";
-import { getCycleStartDate, getCycleEndDate, calculateSpendingVelocity, predictEndOfCycleBalance } from "@/lib/utils";
+import { getCycleStartDate, getCycleEndDate, calculateSpendingVelocity, predictEndOfCycleBalance, calculateSafeDailyLimit } from "@/lib/utils";
 
 // Apple-like vibrant category colors
 const COLORS = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEEAD", "#D4A5A5", "#9B59B6", "#3498DB", "#E67E22", "#95A5A6"];
@@ -106,10 +106,17 @@ export function InsightsPanel() {
     const currentWeekSurplus = weeklyBudget - weeklySpent;
     const savingsRecommendation = currentWeekSurplus > 0 ? Math.floor(currentWeekSurplus * 0.5) : 0;
 
-    // 9. Top category
+    // 9. Recovery Solution (Targeting a safe buffer of Rp 500.000)
+    const SAFE_BUFFER = 500000;
+    const isRecoveryNeeded = predictedBalance < SAFE_BUFFER;
+    const safeDailyLimit = calculateSafeDailyLimit(data.balance, SAFE_BUFFER, cycleEnd);
+    const currentDailyLimit = Math.floor(data.weeklyBudgetTarget / 7);
+    const reductionNeeded = velocity - safeDailyLimit;
+
+    // 10. Top category
     const topCategory = pieData.length > 0 ? pieData[0] : null;
 
-    // 10. Weekly Cycle Breakdown (Specific requirement)
+    // 11. Weekly Cycle Breakdown (Specific requirement)
 
     const weeks = [0, 1, 2, 3].map(weekIdx => {
         const weekStart = addWeeks(cycleStart, weekIdx);
@@ -207,6 +214,15 @@ export function InsightsPanel() {
         });
     }
 
+    if (topCategory && isRecoveryNeeded) {
+        insights.unshift({
+            icon: AlertCircle,
+            type: "danger",
+            text: `Rencana Penyelamatan: Kurangi jatah ${topCategory.name} sebesar Rp ${Math.floor(reductionNeeded).toLocaleString("id-ID")} hari ini.`,
+            color: "#FF6B6B"
+        });
+    }
+
     if (topCategory) {
         const topCategoryPercentage = Math.round((topCategory.value / weeklySpent) * 100);
         insights.push({
@@ -278,6 +294,44 @@ export function InsightsPanel() {
                     );
                 })}
             </div>
+
+            {/* Recovery Solution Card - Only visible when needed */}
+            {isRecoveryNeeded && (
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex flex-col gap-3"
+                >
+                    <div className="flex items-center gap-2 text-red-400">
+                        <AlertCircle size={16} />
+                        <p className="text-xs font-bold uppercase tracking-wider">Solusi Pemulihan Saldo</p>
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                        <p className="text-[10px] text-white/50">Agar saldo akhir bulan aman di Rp {SAFE_BUFFER.toLocaleString("id-ID")}:</p>
+                        <div className="flex items-baseline gap-2">
+                            <p className="text-2xl font-black text-white">Rp {safeDailyLimit.toLocaleString("id-ID")}</p>
+                            <p className="text-[10px] text-white/40">/ hari (Limit Baru)</p>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-black/20 rounded-xl p-2 border border-white/5">
+                            <p className="text-[9px] text-white/40 uppercase mb-0.5">Potong Harian</p>
+                            <p className="text-xs font-bold text-red-400">Rp {Math.max(0, Math.floor(reductionNeeded)).toLocaleString("id-ID")}</p>
+                        </div>
+                        <div className="bg-black/20 rounded-xl p-2 border border-white/5">
+                            <p className="text-[9px] text-white/40 uppercase mb-0.5">Sisa Hari</p>
+                            <p className="text-xs font-bold text-white/80">{differenceInDays(cycleEnd, startOfDay(now))} Hari</p>
+                        </div>
+                    </div>
+
+                    <p className="text-[10px] text-white/60 italic leading-relaxed">
+                        *Kecepatan belanja Anda saat ini adalah Rp {Math.floor(velocity).toLocaleString("id-ID")}/hari.
+                        Anda perlu berhemat agar tidak kehabisan dana.
+                    </p>
+                </motion.div>
+            )}
 
             {/* Professional Forecasting & Savings Section */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

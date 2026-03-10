@@ -105,3 +105,17 @@ export function predictEndOfCycleBalance(
     const daysRemaining = Math.max(0, differenceInDays(cycleEndDate, today));
     return Math.max(0, currentBalance - (velocity * daysRemaining));
 }
+
+/**
+ * Calculates a "Safe Daily Limit" to reach a target buffer balance at the end of the cycle.
+ */
+export function calculateSafeDailyLimit(
+    currentBalance: number,
+    targetEndBalance: number,
+    cycleEndDate: Date
+) {
+    const today = startOfDay(new Date());
+    const daysRemaining = Math.max(1, differenceInDays(cycleEndDate, today));
+    const availableForSpending = Math.max(0, currentBalance - targetEndBalance);
+    return Math.floor(availableForSpending / daysRemaining);
+}
