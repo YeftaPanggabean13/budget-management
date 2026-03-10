@@ -2,7 +2,7 @@ import { useFinance } from "@/lib/hooks/useFinance";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 import { calculateDailyAllowance, getSpentToday, getWeeklyCycleStartDate } from "@/lib/utils";
-import { Zap, AlertCircle } from "lucide-react";
+import { Zap, AlertCircle, Landmark } from "lucide-react";
 
 export function BalanceCard() {
     const { data } = useFinance();
@@ -47,9 +47,10 @@ export function BalanceCard() {
         .filter((tx) => new Date(tx.date).getTime() >= startOfCurrentWeek)
         .reduce((sum, tx) => sum + tx.amount, 0);
 
-    const remainingWeeklyBudget = Math.max(0, data.weeklyBudgetTarget - weeklySpent);
-    const dailyAllowance = calculateDailyAllowance(remainingWeeklyBudget, 'week');
     const spentToday = getSpentToday(data.transactions);
+    const weeklySpentExcludingToday = weeklySpent - spentToday;
+    const remainingWeeklyBudgetBeforeToday = Math.max(0, data.weeklyBudgetTarget - weeklySpentExcludingToday);
+    const dailyAllowance = calculateDailyAllowance(remainingWeeklyBudgetBeforeToday, 'week');
     const remainingToday = dailyAllowance - spentToday;
     const isOverspentToday = remainingToday < 0;
 
@@ -129,6 +130,16 @@ export function BalanceCard() {
                 <div className="bg-[#FF6B6B]/10 rounded-2xl p-4 border border-[#FF6B6B]/20">
                     <p className="text-xs text-white/40 mb-1">Total Spent</p>
                     <p className="text-sm font-medium text-[#FF8E8E]">Rp {spent.toLocaleString("id-ID")}</p>
+                </div>
+            </div>
+
+            <div className="mt-3 bg-emerald-500/5 rounded-2xl p-4 border border-emerald-500/10 flex justify-between items-center group/savings">
+                <div>
+                    <p className="text-[11px] text-emerald-400/60 uppercase tracking-widest font-semibold mb-0.5">Dana Darurat / Tabungan</p>
+                    <p className="text-lg font-bold text-white/90">Rp {(data.savingsBalance || 0).toLocaleString("id-ID")}</p>
+                </div>
+                <div className="bg-emerald-500/10 p-2 rounded-xl group-hover/savings:scale-110 transition-transform">
+                    <Landmark className="text-emerald-400" size={18} />
                 </div>
             </div>
         </motion.div>

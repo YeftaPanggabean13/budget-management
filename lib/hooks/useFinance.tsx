@@ -31,6 +31,8 @@ export type FinanceData = {
     categoryBudgets: CategoryBudget[];
     recurringExpenses: RecurringExpense[];
     lastResetDate: string;
+    savingsBalance: number;
+    emergencyFundGoal: number;
 };
 
 export type FinanceContextType = {
@@ -45,6 +47,8 @@ export type FinanceContextType = {
     setCategoryBudget: (category: string, amount: number) => void;
     resetData: () => void;
     triggerMonthlyReset: () => void;
+    transferToSavings: (amount: number) => void;
+    setEmergencyFundGoal: (amount: number) => void;
 };
 
 const FinanceContext = createContext<FinanceContextType | undefined>(undefined);
@@ -76,6 +80,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
                     categoryBudgets: parsed.categoryBudgets ?? [],
                     recurringExpenses: parsed.recurringExpenses ?? [],
                     lastResetDate: parsed.lastResetDate ?? new Date().toISOString(),
+                    savingsBalance: parsed.savingsBalance ?? 0,
+                    emergencyFundGoal: parsed.emergencyFundGoal ?? 0,
                 });
             } catch (e) {
                 console.error("Failed to parse finance data", e);
@@ -140,6 +146,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
             categoryBudgets: [],
             recurringExpenses: [],
             lastResetDate: new Date().toISOString(),
+            savingsBalance: 0,
+            emergencyFundGoal: 0,
         });
     };
 
@@ -229,6 +237,27 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         });
     };
 
+    const transferToSavings = (amount: number) => {
+        setData((prev) => {
+            if (!prev || prev.balance < amount) return prev;
+            return {
+                ...prev,
+                balance: prev.balance - amount,
+                savingsBalance: prev.savingsBalance + amount,
+            };
+        });
+    };
+
+    const setEmergencyFundGoal = (amount: number) => {
+        setData((prev) => {
+            if (!prev) return prev;
+            return {
+                ...prev,
+                emergencyFundGoal: amount,
+            };
+        });
+    };
+
     const resetData = () => {
         localStorage.removeItem("finance-data");
         setData(null);
@@ -248,6 +277,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
                 setCategoryBudget,
                 resetData,
                 triggerMonthlyReset,
+                transferToSavings,
+                setEmergencyFundGoal,
             }}
         >
             {children}

@@ -2,14 +2,18 @@ import { useFinance } from "@/lib/hooks/useFinance";
 import { motion } from "framer-motion";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, LineChart, Line } from "recharts";
 import { CATEGORIES, getCategoryColor } from "@/lib/constants";
-import { format, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek } from "date-fns";
-import { TrendingUp, AlertCircle, Zap } from "lucide-react";
+import { format, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addWeeks, differenceInDays, startOfDay } from "date-fns";
+import { TrendingUp, AlertCircle, Zap, ChevronRight, ChevronDown, Coins, TrendingDown, Landmark } from "lucide-react";
+
+import { useState } from "react";
+import { getCycleStartDate, getCycleEndDate, calculateSpendingVelocity, predictEndOfCycleBalance } from "@/lib/utils";
 
 // Apple-like vibrant category colors
 const COLORS = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEEAD", "#D4A5A5", "#9B59B6", "#3498DB", "#E67E22", "#95A5A6"];
 
 export function InsightsPanel() {
     const { data } = useFinance();
+    const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
 
     if (!data || data.transactions.length === 0) {
         return (
@@ -90,8 +94,62 @@ export function InsightsPanel() {
     const monthlyBudget = data.initialBalance;
     const monthlyPercentage = Math.round((monthlySpent / monthlyBudget) * 100);
 
-    // 7. Top category
+    // 7. Money Forecasting (Professional Feature)
+    const cycleStart = getCycleStartDate(now);
+    const cycleEnd = getCycleEndDate(now);
+    const velocity = calculateSpendingVelocity(data.transactions);
+    const predictedBalance = predictEndOfCycleBalance(data.balance, velocity, cycleEnd);
+    const diffFromInitial = predictedBalance - data.initialBalance;
+    const isForecastPositive = predictedBalance >= 0;
+
+    // 8. Savings & Emergency Fund Recommendation
+    const currentWeekSurplus = weeklyBudget - weeklySpent;
+    const savingsRecommendation = currentWeekSurplus > 0 ? Math.floor(currentWeekSurplus * 0.5) : 0;
+
+    // 9. Top category
     const topCategory = pieData.length > 0 ? pieData[0] : null;
+
+    // 10. Weekly Cycle Breakdown (Specific requirement)
+
+    const weeks = [0, 1, 2, 3].map(weekIdx => {
+        const weekStart = addWeeks(cycleStart, weekIdx);
+        const weekEnd = addWeeks(weekStart, 1);
+        const actualEnd = weekEnd > cycleEnd ? cycleEnd : weekEnd;
+
+        // Group transactions for this specific week
+        const weekTransactions = data.transactions.filter(tx => {
+            const txDate = parseISO(tx.date);
+            return txDate >= weekStart && txDate < actualEnd;
+        });
+
+        const totalSpent = weekTransactions.reduce((sum, tx) => sum + tx.amount, 0);
+
+        // Calculate category breakdown for this week
+        const categoryBreakdown: Record<string, number> = {};
+        weekTransactions.forEach(tx => {
+            categoryBreakdown[tx.category] = (categoryBreakdown[tx.category] || 0) + tx.amount;
+        });
+
+        const sortedCategories = Object.entries(categoryBreakdown)
+            .map(([name, amount]) => ({ name, amount }))
+            .sort((a, b) => b.amount - a.amount);
+
+        return {
+            index: weekIdx + 1,
+            label: `Week ${weekIdx + 1}`,
+            start: weekStart,
+            end: actualEnd,
+            total: totalSpent,
+            categories: sortedCategories,
+            isCurrent: now >= weekStart && now < actualEnd
+        };
+    });
+
+    const weeklyBreakdownData = weeks.map(w => ({
+        name: w.label,
+        amount: w.total,
+        isCurrent: w.isCurrent
+    }));
 
     // Calculate smart insights
     const insights = [];
@@ -103,19 +161,30 @@ export function InsightsPanel() {
             text: `You exceeded your weekly budget by ${Math.round(weeklyPercentage - 100)}%`,
             color: "#FF6B6B"
         });
-    } else if (weeklyPercentage >= 80) {
+    }
+
+    if (predictedBalance < 500000 && predictedBalance > 0) {
         insights.push({
-            icon: AlertCircle,
+            icon: TrendingDown,
             type: "warning",
-            text: `You've spent ${weeklyPercentage}% of weekly budget`,
+            text: `Waspada! Saldo akhir bulan diprediksi menipis (Rp ${Math.floor(predictedBalance).toLocaleString("id-ID")})`,
             color: "#FFB043"
         });
-    } else {
+    } else if (predictedBalance <= 0) {
         insights.push({
-            icon: Zap,
-            type: "normal",
-            text: `${100 - weeklyPercentage}% of weekly budget remaining`,
-            color: "#7C5CFF"
+            icon: AlertCircle,
+            type: "danger",
+            text: `Peringatan: Saldo diprediksi HABIS sebelum tanggal 3!`,
+            color: "#FF6B6B"
+        });
+    }
+
+    if (savingsRecommendation > 200000) {
+        insights.push({
+            icon: Landmark,
+            type: "success",
+            text: `Hebat! Kamu bisa menyisihkan Rp ${savingsRecommendation.toLocaleString("id-ID")} ke Dana Darurat minggu ini.`,
+            color: "#4ECDC4"
         });
     }
 
@@ -210,17 +279,135 @@ export function InsightsPanel() {
                 })}
             </div>
 
-            {/* Summary Stats */}
-            <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-3">
-                    <p className="text-[10px] text-white/40 uppercase tracking-wider mb-1">This Week</p>
-                    <p className="text-sm font-semibold text-white/90">Rp {weeklySpent.toLocaleString("id-ID")}</p>
-                    <p className="text-[10px] text-white/30 mt-1">{weeklyPercentage}% of budget</p>
+            {/* Professional Forecasting & Savings Section */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-white/40 mb-1">
+                        <TrendingUp size={14} />
+                        <p className="text-[10px] uppercase tracking-wider font-semibold">Forecast Akhir Bulan</p>
+                    </div>
+                    <p className={`text-xl font-bold ${isForecastPositive ? 'text-white/90' : 'text-red-400'}`}>
+                        Rp {Math.floor(predictedBalance).toLocaleString("id-ID")}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                        <div className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase ${isForecastPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                            {isForecastPositive ? 'Aman' : 'Overbudget'}
+                        </div>
+                        <p className="text-[10px] text-white/30">Hingga Tgl 3</p>
+                    </div>
                 </div>
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-3">
-                    <p className="text-[10px] text-white/40 uppercase tracking-wider mb-1">This Month</p>
-                    <p className="text-sm font-semibold text-white/90">Rp {monthlySpent.toLocaleString("id-ID")}</p>
-                    <p className="text-[10px] text-white/30 mt-1">{monthlyPercentage}% of budget</p>
+
+                <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-white/40 mb-1">
+                        <Landmark size={14} />
+                        <p className="text-[10px] uppercase tracking-wider font-semibold">Tabungan (Dana Darurat)</p>
+                    </div>
+                    <p className="text-xl font-bold text-white/90">
+                        Rp {(data.savingsBalance || 0).toLocaleString("id-ID")}
+                    </p>
+                    <div className="flex items-center gap-1.5 mt-1">
+                        <div className="px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase bg-blue-500/20 text-blue-400">
+                            Professional Goal
+                        </div>
+                        <p className="text-[10px] text-white/30">Pemisahan Dana</p>
+                    </div>
+                </div>
+            </div>
+
+            <div className="h-px bg-white/5" />
+
+            {/* Weekly Breakdown Section */}
+            <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-white/60 uppercase tracking-wider">Weekly Spending Breakdown</p>
+                </div>
+
+                <div className="h-[150px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={weeklyBreakdownData}>
+                            <XAxis
+                                dataKey="name"
+                                stroke="rgba(255,255,255,0.2)"
+                                fontSize={10}
+                                tickLine={false}
+                                axisLine={false}
+                            />
+                            <Tooltip
+                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                                content={({ active, payload }) => {
+                                    if (active && payload && payload.length) {
+                                        const weekIdx = weeklyBreakdownData.findIndex(d => d.name === payload[0].payload.name);
+                                        const week = weeks[weekIdx];
+                                        return (
+                                            <div className="bg-[#1A1A24] border border-white/10 p-3 rounded-xl shadow-xl">
+                                                <p className="text-[10px] text-white/40 mb-1">{format(week.start, "MMM d")} - {format(week.end, "MMM d")}</p>
+                                                <p className="text-sm font-bold text-white">Rp {payload[0].value?.toLocaleString("id-ID")}</p>
+                                            </div>
+                                        );
+                                    }
+                                    return null;
+                                }}
+                            />
+                            <Bar
+                                dataKey="amount"
+                                radius={[6, 6, 0, 0]}
+                                onClick={(data: any, index: number) => setExpandedWeek(expandedWeek === index ? null : index)}
+                            >
+                                {weeklyBreakdownData.map((entry, index) => (
+                                    <Cell
+                                        key={`cell-${index}`}
+                                        fill={entry.isCurrent ? "#7C5CFF" : "rgba(124, 92, 255, 0.3)"}
+                                        className="cursor-pointer hover:opacity-80 transition-opacity"
+                                    />
+                                ))}
+                            </Bar>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2">
+                    {weeks.map((week, idx) => (
+                        <div key={idx} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden transition-all">
+                            <button
+                                onClick={() => setExpandedWeek(expandedWeek === idx ? null : idx)}
+                                className="w-full flex items-center justify-between p-3 hover:bg-white/5 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className={`w-1.5 h-1.5 rounded-full ${week.isCurrent ? 'bg-[#7C5CFF] shadow-[0_0_8px_#7C5CFF]' : 'bg-white/20'}`} />
+                                    <div className="text-left">
+                                        <p className="text-xs font-medium text-white/90">{week.label}</p>
+                                        <p className="text-[10px] text-white/40">{format(week.start, "d MMM")} - {format(week.end, "d MMM")}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <p className="text-xs font-semibold text-white/80">Rp {week.total.toLocaleString("id-ID")}</p>
+                                    {expandedWeek === idx ? <ChevronDown size={14} className="text-white/40" /> : <ChevronRight size={14} className="text-white/40" />}
+                                </div>
+                            </button>
+
+                            {expandedWeek === idx && (
+                                <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: "auto", opacity: 1 }}
+                                    className="px-3 pb-3 pt-1 border-t border-white/5 space-y-2"
+                                >
+                                    {week.categories.length > 0 ? (
+                                        week.categories.map((cat, i) => (
+                                            <div key={i} className="flex items-center justify-between">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getCategoryColor(cat.name).bg }} />
+                                                    <p className="text-[10px] text-white/60">{cat.name}</p>
+                                                </div>
+                                                <p className="text-[10px] font-medium text-white/80">Rp {cat.amount.toLocaleString("id-ID")}</p>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <p className="text-[10px] text-white/30 text-center py-1">No transactions this week</p>
+                                    )}
+                                </motion.div>
+                            )}
+                        </div>
+                    ))}
                 </div>
             </div>
 

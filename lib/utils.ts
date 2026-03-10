@@ -73,3 +73,35 @@ export function getSpentToday(transactions: { date: string; amount: number }[]) 
         .filter(tx => isSameDay(parseISO(tx.date), today))
         .reduce((sum, tx) => sum + tx.amount, 0);
 }
+
+/**
+ * Calculates current spending velocity (average spent per day in current cycle).
+ */
+export function calculateSpendingVelocity(transactions: { date: string; amount: number }[]) {
+    const cycleStart = getCycleStartDate();
+    const today = startOfDay(new Date());
+    const daysPassed = Math.max(1, differenceInDays(today, cycleStart) + 1);
+
+    const cycleSpent = transactions
+        .filter(tx => {
+            const txDate = parseISO(tx.date);
+            return txDate >= cycleStart && txDate <= today;
+        })
+        .reduce((sum, tx) => sum + tx.amount, 0);
+
+    return cycleSpent / daysPassed;
+}
+
+/**
+ * Predicts balance at the end of the current cycle based on current velocity.
+ * Formula: Current Balance - (Daily Velocity * Days Remaining)
+ */
+export function predictEndOfCycleBalance(
+    currentBalance: number,
+    velocity: number,
+    cycleEndDate: Date
+) {
+    const today = startOfDay(new Date());
+    const daysRemaining = Math.max(0, differenceInDays(cycleEndDate, today));
+    return Math.max(0, currentBalance - (velocity * daysRemaining));
+}
