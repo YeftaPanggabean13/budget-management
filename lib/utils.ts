@@ -40,6 +40,7 @@ export function getWeeklyCycleStartDate(date: Date = new Date()) {
 }
 
 /**
+ * @deprecated Use calculateDynamicDailyAllowance instead.
  * Calculates the remaining daily allowance based on weekly or monthly budget.
  */
 export function calculateDailyAllowance(
@@ -62,6 +63,51 @@ export function calculateDailyAllowance(
     }
 
     return Math.max(0, Math.floor(remainingBudget / daysRemaining));
+}
+
+/**
+ * Calculates a dynamic daily allowance based on remaining weekly budget and
+ * remaining days in the current calendar week (Mon–Sun).
+ *
+ * This is adaptive: early over-spending reduces future allowances automatically.
+ * When weekdayWeights are provided (Smart Allocation), the allowance is scaled
+ * by the historical pattern for today's day of the week.
+ *
+ * @param weeklyBudget   - Total weekly budget target
+ * @param weeklySpent    - Total spent this week INCLUDING today
+ * @param spentToday     - Amount spent today (used to compute "before today" baseline)
+ * @param weekdayWeights - Optional 7-element array [Mon=0 … Sun=6], normalized so mean=1.0
+ * @returns { allowance, daysLeft, isWeighted }
+ */
+export function calculateDynamicDailyAllowance(
+    weeklyBudgetTarget: number,
+    weeklySpent: number,
+    spentToday: number,
+    weekdayWeights?: number[]
+): { allowance: number; daysLeft: number; isWeighted: boolean } {
+    const dayOfWeek = new Date().getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+
+    // Days remaining in the week INCLUDING today (week runs Mon–Sun)
+    const daysLeftInWeek = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
+
+    // Remaining weekly budget: exclude today's spend to get a fresh daily target
+    const spentBeforeToday = Math.max(0, weeklySpent - spentToday);
+    const remainingWeeklyBudget = Math.max(0, weeklyBudgetTarget - spentBeforeToday);
+
+    // Base allowance = remaining weekly budget ÷ days left in the week
+    const baseAllowance = daysLeftInWeek > 0 ? Math.floor(remainingWeeklyBudget / daysLeftInWeek) : 0;
+
+    if (weekdayWeights && weekdayWeights.length === 7) {
+        const todayIdx = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const weight = Math.min(2.0, Math.max(0.5, weekdayWeights[todayIdx] ?? 1.0));
+        return {
+            allowance: Math.floor(baseAllowance * weight),
+            daysLeft: daysLeftInWeek,
+            isWeighted: true,
+        };
+    }
+
+    return { allowance: baseAllowance, daysLeft: daysLeftInWeek, isWeighted: false };
 }
 
 /**
@@ -118,4 +164,31 @@ export function calculateSafeDailyLimit(
     const daysRemaining = Math.max(1, differenceInDays(cycleEndDate, today));
     const availableForSpending = Math.max(0, currentBalance - targetEndBalance);
     return Math.floor(availableForSpending / daysRemaining);
+}
+
+/**
+ * Primary daily allowance formula: remaining_balance / remaining_days_in_cycle.
+ * This is the intelligent, adaptive version that automatically corrects for
+ * overspending or underspending in previous days.
+ *
+ * @param currentBalance  - Current balance
+ * @param cycleEndDate    - End date of the current pay cycle
+ * @param weekdayWeights  - Optional [Mon=0 … Sun=6] weights for Smart Allocation
+ */
+export function calculateCycleDailyAllowance(
+    currentBalance: number,
+    cycleEndDate: Date,
+    weekdayWeights?: number[]
+): { allowance: number; daysLeft: number; isWeighted: boolean } {
+    const today = startOfDay(new Date());
+    const daysLeft = Math.max(1, differenceInDays(cycleEndDate, today));
+    const base = Math.floor(Math.max(0, currentBalance) / daysLeft);
+
+    if (weekdayWeights && weekdayWeights.length === 7) {
+        const dayOfWeek = new Date().getDay();
+        const idx = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const w = Math.min(2.0, Math.max(0.5, weekdayWeights[idx] ?? 1.0));
+        return { allowance: Math.floor(base * w), daysLeft, isWeighted: true };
+    }
+    return { allowance: base, daysLeft, isWeighted: false };
 }

@@ -17,7 +17,7 @@ function SetupScreen() {
     }
     const weeklyNum = initWeeklyBudget
       ? Number(initWeeklyBudget.replace(/\D/g, ""))
-      : Math.floor(balanceNum / 4);
+      : Math.floor(balanceNum / 4.33);
 
     setSetup(balanceNum, weeklyNum);
   };
@@ -63,7 +63,7 @@ function SetupScreen() {
           <input
             type="text"
             inputMode="numeric"
-            placeholder="Leave blank to auto-split ÷4"
+            placeholder="Kosongkan untuk otomatis ÷ 4.33 minggu"
             value={initWeeklyBudget}
             onChange={(e) => setInitWeeklyBudget(formatNumber(e.target.value))}
             className="w-full bg-white/5 border border-white/10 rounded-2xl text-white text-sm px-4 py-3 outline-none focus:border-[#7C5CFF]/60 focus:bg-[#7C5CFF]/10 focus:ring-4 focus:ring-[#7C5CFF]/10 transition-all placeholder:text-white/20"

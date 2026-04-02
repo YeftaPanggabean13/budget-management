@@ -1,15 +1,28 @@
+"use client";
+
 import { useFinance } from "@/lib/hooks/useFinance";
-import { motion } from "framer-motion";
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis, YAxis, LineChart, Line } from "recharts";
-import { CATEGORIES, getCategoryColor } from "@/lib/constants";
-import { format, subDays, isSameDay, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addWeeks, differenceInDays, startOfDay } from "date-fns";
-import { TrendingUp, AlertCircle, Zap, ChevronRight, ChevronDown, Coins, TrendingDown, Landmark } from "lucide-react";
-
+import { motion, AnimatePresence } from "framer-motion";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, BarChart, Bar, XAxis } from "recharts";
+import { getCategoryColor } from "@/lib/constants";
+import { format, subDays, isSameDay, parseISO, addWeeks, differenceInDays } from "date-fns";
+import { TrendingUp, TrendingDown, AlertCircle, Zap, ChevronRight, ChevronDown, Landmark, Brain, Activity, Flame, Lightbulb } from "lucide-react";
 import { useState } from "react";
-import { getCycleStartDate, getCycleEndDate, calculateSpendingVelocity, predictEndOfCycleBalance, calculateSafeDailyLimit } from "@/lib/utils";
+import { getCycleStartDate, getCycleEndDate, getWeeklyCycleStartDate, getSpentToday } from "@/lib/utils";
+import { runAnalyticsPipeline, type UserProfile, type InsightType } from "@/lib/analytics";
 
-// Apple-like vibrant category colors
-const COLORS = ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEEAD", "#D4A5A5", "#9B59B6", "#3498DB", "#E67E22", "#95A5A6"];
+const PIE_COLORS = ["#FF6B6B","#4ECDC4","#45B7D1","#96CEB4","#FFEEAD","#D4A5A5","#9B59B6","#3498DB","#E67E22","#95A5A6"];
+
+const INSIGHT_ICON: Record<InsightType, typeof AlertCircle> = {
+    danger: AlertCircle, warning: Zap, info: Activity, success: Zap,
+};
+
+const PROFILE_META: Record<UserProfile, { label: string; color: string; bg: string; Icon: typeof Brain }> = {
+    conservative: { label: "Hemat & Efisien",   color: "#4ECDC4", bg: "rgba(78,205,196,0.12)",  Icon: Brain  },
+    balanced:     { label: "Seimbang",       color: "#B983FF", bg: "rgba(185,131,255,0.12)", Icon: Brain  },
+    aggressive:   { label: "Agresif (Waspada)",   color: "#FFB043", bg: "rgba(255,176,67,0.12)",  Icon: Flame  },
+};
+
+const DAY_LABELS = ["Sen","Sel","Rab","Kam","Jum","Sab","Min"];
 
 export function InsightsPanel() {
     const { data } = useFinance();
@@ -17,513 +30,272 @@ export function InsightsPanel() {
 
     if (!data || data.transactions.length === 0) {
         return (
-            <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.3, duration: 0.5 }}
-                className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex items-center justify-center min-h-[300px]"
-            >
-                <p className="text-white/40 text-sm">Add transactions to see insights</p>
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-[0_20px_60px_rgba(0,0,0,0.5)] flex items-center justify-center min-h-[300px]">
+                <p className="text-white/40 text-sm">Tambahkan transaksi untuk mendapatkan insight cerdas</p>
             </motion.div>
         );
     }
 
-    // 1. Prepare Category Data for Pie Chart
-    const categoryTotals: Record<string, number> = {};
-    data.transactions.forEach(tx => {
-        categoryTotals[tx.category] = (categoryTotals[tx.category] || 0) + tx.amount;
-    });
-
-    const pieData = Object.entries(categoryTotals)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 5); // Top 5 categories
-
-    // 2. Prepare Last 7 Days Data for Bar Chart
-    const last7Days = Array.from({ length: 7 }).map((_, i) => {
-        const d = subDays(new Date(), 6 - i);
-        return {
-            date: d,
-            displayDate: format(d, "EEE"),
-            amount: 0
-        };
-    });
-
-    data.transactions.forEach(tx => {
-        const txDate = parseISO(tx.date);
-        const day = last7Days.find(d => isSameDay(d.date, txDate));
-        if (day) {
-            day.amount += tx.amount;
-        }
-    });
-
-    // 3. Weekly budget analysis
     const now = new Date();
-    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
-    const startOfCurrentWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek).setHours(0, 0, 0, 0);
-    const weeklyBudget = data.weeklyBudgetTarget;
-    const weeklySpent = data.transactions
-        .filter((tx) => new Date(tx.date).getTime() >= startOfCurrentWeek)
-        .reduce((sum, tx) => sum + tx.amount, 0);
-    const weeklyPercentage = Math.round((weeklySpent / weeklyBudget) * 100);
-
-    // 4. Spending velocity (early week warning)
-    const daysIntoWeek = dayOfWeek + 1;
-    const expectedDailyAverage = weeklyBudget / 7;
-    const expectedSpentByNow = expectedDailyAverage * daysIntoWeek;
-    const spendingPace = weeklySpent / expectedSpentByNow;
-
-    // 5. Category trend (compare this week vs last week)
-    const lastWeekStart = new Date(startOfCurrentWeek - 7 * 24 * 60 * 60 * 1000);
-    const lastWeekSpent = data.transactions
-        .filter((tx) => {
-            const txTime = new Date(tx.date).getTime();
-            return txTime >= lastWeekStart.getTime() && txTime < startOfCurrentWeek;
-        })
-        .reduce((sum, tx) => sum + tx.amount, 0);
-
-    // 6. Monthly analysis
-    const monthStart = startOfMonth(new Date());
-    const monthEnd = endOfMonth(new Date());
-    const monthlySpent = data.transactions
-        .filter((tx) => {
-            const txDate = parseISO(tx.date);
-            return txDate >= monthStart && txDate <= monthEnd;
-        })
-        .reduce((sum, tx) => sum + tx.amount, 0);
-    const monthlyBudget = data.initialBalance;
-    const monthlyPercentage = Math.round((monthlySpent / monthlyBudget) * 100);
-
-    // 7. Money Forecasting (Professional Feature)
     const cycleStart = getCycleStartDate(now);
-    const cycleEnd = getCycleEndDate(now);
-    const velocity = calculateSpendingVelocity(data.transactions);
-    const predictedBalance = predictEndOfCycleBalance(data.balance, velocity, cycleEnd);
-    const diffFromInitial = predictedBalance - data.initialBalance;
-    const isForecastPositive = predictedBalance >= 0;
+    const cycleEnd   = getCycleEndDate(now);
+    const weekStart  = getWeeklyCycleStartDate(now);
 
-    // 8. Savings & Emergency Fund Recommendation
-    const currentWeekSurplus = weeklyBudget - weeklySpent;
-    const savingsRecommendation = currentWeekSurplus > 0 ? Math.floor(currentWeekSurplus * 0.5) : 0;
+    const weeklySpent = data.transactions
+        .filter(tx => parseISO(tx.date) >= weekStart)
+        .reduce((s, tx) => s + tx.amount, 0);
+    const spentToday = getSpentToday(data.transactions);
 
-    // 9. Recovery Solution (Targeting a safe buffer of Rp 500.000)
-    const SAFE_BUFFER = 500000;
-    const isRecoveryNeeded = predictedBalance < SAFE_BUFFER;
-    const safeDailyLimit = calculateSafeDailyLimit(data.balance, SAFE_BUFFER, cycleEnd);
-    const currentDailyLimit = Math.floor(data.weeklyBudgetTarget / 7);
-    const reductionNeeded = velocity - safeDailyLimit;
+    const report = runAnalyticsPipeline(data, {
+        weeklyBudget: data.weeklyBudgetTarget,
+        weeklySpent, spentToday,
+        currentBalance: data.balance,
+    });
 
-    // 10. Top category
-    const topCategory = pieData.length > 0 ? pieData[0] : null;
+    const { forecast, burnRate, weekdayProfile, userProfile, anomalies, recoveryPlan, insights, savingGuidance, trend, preprocessed } = report;
+    const { label: profileLabel, color: profileColor, bg: profileBg, Icon: ProfileIcon } = PROFILE_META[userProfile];
 
-    // 11. Weekly Cycle Breakdown (Specific requirement)
+    // Pie data
+    const catTotals: Record<string, number> = {};
+    data.transactions.forEach(tx => { catTotals[tx.category] = (catTotals[tx.category] || 0) + tx.amount; });
+    const pieData = Object.entries(catTotals).map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value).slice(0, 5);
 
-    const weeks = [0, 1, 2, 3].map(weekIdx => {
-        const weekStart = addWeeks(cycleStart, weekIdx);
-        const weekEnd = addWeeks(weekStart, 1);
-        const actualEnd = weekEnd > cycleEnd ? cycleEnd : weekEnd;
+    // Last 7 days bar
+    const last7Days = Array.from({ length: 7 }, (_, i) => {
+        const d = subDays(new Date(), 6 - i);
+        return { displayDate: format(d, "EEE"), amount: data.transactions.filter(tx => isSameDay(parseISO(tx.date), d)).reduce((s, tx) => s + tx.amount, 0) };
+    });
 
-        // Group transactions for this specific week
-        const weekTransactions = data.transactions.filter(tx => {
-            const txDate = parseISO(tx.date);
-            return txDate >= weekStart && txDate < actualEnd;
-        });
-
-        const totalSpent = weekTransactions.reduce((sum, tx) => sum + tx.amount, 0);
-
-        // Calculate category breakdown for this week
-        const categoryBreakdown: Record<string, number> = {};
-        weekTransactions.forEach(tx => {
-            categoryBreakdown[tx.category] = (categoryBreakdown[tx.category] || 0) + tx.amount;
-        });
-
-        const sortedCategories = Object.entries(categoryBreakdown)
-            .map(([name, amount]) => ({ name, amount }))
-            .sort((a, b) => b.amount - a.amount);
-
+    // Weekly breakdown
+    const weeks = [0, 1, 2, 3].map(wi => {
+        const wStart = addWeeks(cycleStart, wi);
+        const wEnd   = addWeeks(wStart, 1);
+        const actualEnd = wEnd > cycleEnd ? cycleEnd : wEnd;
+        const txs = data.transactions.filter(tx => { const d = parseISO(tx.date); return d >= wStart && d < actualEnd; });
+        const total = txs.reduce((s, tx) => s + tx.amount, 0);
+        const cats: Record<string, number> = {};
+        txs.forEach(tx => { cats[tx.category] = (cats[tx.category] || 0) + tx.amount; });
         return {
-            index: weekIdx + 1,
-            label: `Week ${weekIdx + 1}`,
-            start: weekStart,
-            end: actualEnd,
-            total: totalSpent,
-            categories: sortedCategories,
-            isCurrent: now >= weekStart && now < actualEnd
+            label: `Minggu ${wi + 1}`, start: wStart, end: actualEnd, total,
+            categories: Object.entries(cats).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
+            isCurrent: now >= wStart && now < actualEnd,
         };
     });
 
-    const weeklyBreakdownData = weeks.map(w => ({
-        name: w.label,
-        amount: w.total,
-        isCurrent: w.isCurrent
-    }));
+    // Heatmap color logic
+    const maxAvg = Math.max(...weekdayProfile.averages, 1);
+    const todayIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
 
-    // Calculate smart insights
-    const insights = [];
-
-    if (weeklyPercentage > 100) {
-        insights.push({
-            icon: AlertCircle,
-            type: "danger",
-            text: `You exceeded your weekly budget by ${Math.round(weeklyPercentage - 100)}%`,
-            color: "#FF6B6B"
-        });
-    }
-
-    if (predictedBalance < 500000 && predictedBalance > 0) {
-        insights.push({
-            icon: TrendingDown,
-            type: "warning",
-            text: `Waspada! Saldo akhir bulan diprediksi menipis (Rp ${Math.floor(predictedBalance).toLocaleString("id-ID")})`,
-            color: "#FFB043"
-        });
-    } else if (predictedBalance <= 0) {
-        insights.push({
-            icon: AlertCircle,
-            type: "danger",
-            text: `Peringatan: Saldo diprediksi HABIS sebelum tanggal 3!`,
-            color: "#FF6B6B"
-        });
-    }
-
-    if (savingsRecommendation > 200000) {
-        insights.push({
-            icon: Landmark,
-            type: "success",
-            text: `Hebat! Kamu bisa menyisihkan Rp ${savingsRecommendation.toLocaleString("id-ID")} ke Dana Darurat minggu ini.`,
-            color: "#4ECDC4"
-        });
-    }
-
-    if (spendingPace > 1.1) {
-        insights.push({
-            icon: TrendingUp,
-            type: "warning",
-            text: `Spending ${Math.round((spendingPace - 1) * 100)}% faster than planned`,
-            color: "#FFB043"
-        });
-    }
-
-    if (weeklySpent > lastWeekSpent && lastWeekSpent > 0) {
-        const increase = Math.round(((weeklySpent - lastWeekSpent) / lastWeekSpent) * 100);
-        insights.push({
-            icon: TrendingUp,
-            type: "info",
-            text: `Spending up ${increase}% vs last week`,
-            color: "#4ECDC4"
-        });
-    }
-
-    if (topCategory && isRecoveryNeeded) {
-        insights.unshift({
-            icon: AlertCircle,
-            type: "danger",
-            text: `Rencana Penyelamatan: Kurangi jatah ${topCategory.name} sebesar Rp ${Math.floor(reductionNeeded).toLocaleString("id-ID")} hari ini.`,
-            color: "#FF6B6B"
-        });
-    }
-
-    if (topCategory) {
-        const topCategoryPercentage = Math.round((topCategory.value / weeklySpent) * 100);
-        insights.push({
-            icon: Zap,
-            type: "info",
-            text: `${topCategory.name} is ${topCategoryPercentage}% of spending`,
-            color: getCategoryColor(topCategory.name).bg
-        });
-    }
-
-    // Daily Allowance Insights
-    const dailyAllowance = Math.floor(data.weeklyBudgetTarget / 7);
-    const spentToday = data.transactions
-        .filter(tx => isSameDay(parseISO(tx.date), new Date()))
-        .reduce((sum, tx) => sum + tx.amount, 0);
-
-    if (spentToday > dailyAllowance && dailyAllowance > 0) {
-        insights.unshift({
-            icon: AlertCircle,
-            type: "danger",
-            text: `Kamu sudah melewati jatah harian (Over Rp ${(spentToday - dailyAllowance).toLocaleString("id-ID")})`,
-            color: "#FF6B6B"
-        });
-    } else if (spentToday > dailyAllowance * 0.8 && dailyAllowance > 0) {
-        insights.unshift({
-            icon: Zap,
-            type: "warning",
-            text: "Hampir mencapai batas jatah harian. Hemat sisa hari ini!",
-            color: "#FFB043"
-        });
-    } else if (spentToday === 0 && dailyAllowance > 0) {
-        insights.unshift({
-            icon: Zap,
-            type: "success",
-            text: `Belum ada pengeluaran hari ini. Jatah aman: Rp ${dailyAllowance.toLocaleString("id-ID")}`,
-            color: "#4ECDC4"
-        });
+    function getHeatColor(idx: number) {
+        if (!weekdayProfile.hasSufficientData) return "rgba(255,255,255,0.05)";
+        const ratio = weekdayProfile.averages[idx] / maxAvg;
+        if (ratio > 0.8) return "rgba(255,107,107,0.4)";
+        if (ratio > 0.5) return "rgba(255,176,67,0.3)";
+        if (ratio > 0.2) return "rgba(78,205,196,0.2)";
+        return "rgba(255,255,255,0.05)";
     }
 
     return (
-        <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.5 }}
-            whileHover={{ y: -2 }}
-            className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-[0_20px_60px_rgba(0,0,0,0.5)] transition-all flex flex-col gap-6"
-        >
-            <div className="flex justify-between items-center">
-                <p className="text-[16px] font-medium text-white/85 tracking-tight">Smart Insights</p>
+        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col gap-6">
+
+            {/* Profile & Recovery Row */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* 1. Profile Card */}
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-5 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-white/40">
+                            <Brain size={14} />
+                            <p className="text-[10px] font-bold uppercase tracking-widest">Behavioral Profile</p>
+                        </div>
+                        <div className="px-2 py-1 rounded-full text-[9px] font-bold uppercase"
+                            style={{ backgroundColor: profileBg, color: profileColor, border: `1px solid ${profileColor}40` }}>
+                            {profileLabel}
+                        </div>
+                    </div>
+                    <div>
+                        <p className="text-[11px] text-white/50 leading-relaxed">
+                            Berdasarkan pola spending 14 hari terakhir, profilmu adalah <span style={{ color: profileColor }} className="font-bold">{profileLabel}</span>.
+                            {userProfile === "aggressive" ? " Ada baiknya mulai mengerem sedikit agar saldo akhir bulan tetap terjaga." : " Pertahankan kedisiplinan ini!"}
+                        </p>
+                    </div>
+                </div>
+
+                {/* 2. Forecast / Recovery Card */}
+                <div className={`bg-white/5 border rounded-3xl p-5 flex flex-col gap-3 ${forecast.predicted < 500_000 ? "border-orange-500/20" : "border-white/10"}`}>
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-white/40">
+                            <Activity size={14} />
+                            <p className="text-[10px] font-bold uppercase tracking-widest">Forecast Akhir Bulan</p>
+                        </div>
+                        <TrendingUp size={14} className={forecast.predicted < 500_000 ? "text-orange-400" : "text-emerald-400"} />
+                    </div>
+                    <div>
+                        <p className="text-xl font-bold text-white tracking-tight">Rp {Math.floor(forecast.predicted).toLocaleString("id-ID")}</p>
+                        <p className="text-[10px] text-white/30 mt-1">
+                            Sisa saldo diprediksi di tanggal 3 (pola spending Rp {Math.floor(forecast.riskAdjustedVelocity).toLocaleString("id-ID")}/hari).
+                        </p>
+                    </div>
+                </div>
             </div>
 
-            {/* Smart Insights Cards */}
-            <div className="space-y-2">
-                {insights.map((insight, i) => {
-                    const IconComponent = insight.icon;
-                    return (
-                        <motion.div
-                            key={i}
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 0.35 + i * 0.05 }}
-                            className="flex items-start gap-3 bg-white/5 border border-white/10 rounded-2xl p-3"
-                        >
-                            <div className="shrink-0 mt-1">
-                                <IconComponent size={16} style={{ color: insight.color }} />
+            {/* Insights Stack */}
+            <div className="bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col gap-4">
+                <p className="text-xs font-bold text-white/40 uppercase tracking-widest flex items-center gap-2">
+                    <Zap size={14} className="text-[#B983FF]" /> Smart Analysis
+                </p>
+                <div className="space-y-3">
+                    {insights.map((ins, i) => {
+                        const Icon = INSIGHT_ICON[ins.type];
+                        return (
+                            <motion.div key={ins.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: i * 0.05 }}
+                                className="flex items-start gap-4 p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-colors">
+                                <div className="shrink-0 mt-0.5"><Icon size={16} style={{ color: ins.color }} /></div>
+                                <div className="space-y-1">
+                                    <p className="text-[12px] font-bold text-white/90">{ins.title}</p>
+                                    <p className="text-[11px] text-white/50 leading-relaxed">{ins.body}</p>
+                                </div>
+                            </motion.div>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Burn Rate & Trends */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest">Velocity & Trends</p>
+                        {trend.direction === "increasing" ? <TrendingUp size={14} className="text-orange-400" /> : <TrendingDown size={14} className="text-emerald-400" />}
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <div className="flex justify-between items-baseline mb-1.5">
+                                <p className="text-[11px] text-white/60">Burn Rate (Pace Spending)</p>
+                                <p className={`text-xs font-bold ${burnRate.ratio > 1.1 ? "text-orange-400" : "text-emerald-400"}`}>{burnRate.ratio.toFixed(2)}×</p>
                             </div>
-                            <p className="text-xs text-white/70 leading-relaxed">{insight.text}</p>
-                        </motion.div>
-                    );
-                })}
-            </div>
-
-            {/* Recovery Solution Card - Only visible when needed */}
-            {isRecoveryNeeded && (
-                <motion.div
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex flex-col gap-3"
-                >
-                    <div className="flex items-center gap-2 text-red-400">
-                        <AlertCircle size={16} />
-                        <p className="text-xs font-bold uppercase tracking-wider">Solusi Pemulihan Saldo</p>
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                        <p className="text-[10px] text-white/50">Agar saldo akhir bulan aman di Rp {SAFE_BUFFER.toLocaleString("id-ID")}:</p>
-                        <div className="flex items-baseline gap-2">
-                            <p className="text-2xl font-black text-white">Rp {safeDailyLimit.toLocaleString("id-ID")}</p>
-                            <p className="text-[10px] text-white/40">/ hari (Limit Baru)</p>
+                            <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                                <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(100, burnRate.ratio * 50)}%` }}
+                                    className={`h-full ${burnRate.ratio > 1.1 ? "bg-orange-400" : "bg-emerald-400"}`} />
+                            </div>
                         </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                        <div className="bg-black/20 rounded-xl p-2 border border-white/5">
-                            <p className="text-[9px] text-white/40 uppercase mb-0.5">Potong Harian</p>
-                            <p className="text-xs font-bold text-red-400">Rp {Math.max(0, Math.floor(reductionNeeded)).toLocaleString("id-ID")}</p>
+                        <div className="flex justify-between p-3 bg-white/5 rounded-xl">
+                            <div className="text-center flex-1">
+                                <p className="text-[9px] text-white/30 uppercase mb-1">Rata-rata 7h</p>
+                                <p className="text-[11px] font-bold text-white">Rp {Math.floor(trend.ema7d).toLocaleString("id-ID")}</p>
+                            </div>
+                            <div className="w-px bg-white/10 mx-2" />
+                            <div className="text-center flex-1">
+                                <p className="text-[9px] text-white/30 uppercase mb-1">Trend</p>
+                                <p className={`text-[11px] font-bold ${trend.slopePercent > 0 ? "text-orange-400" : "text-emerald-400"}`}>
+                                    {trend.slopePercent > 0 ? "+" : ""}{trend.slopePercent}%
+                                </p>
+                            </div>
                         </div>
-                        <div className="bg-black/20 rounded-xl p-2 border border-white/5">
-                            <p className="text-[9px] text-white/40 uppercase mb-0.5">Sisa Hari</p>
-                            <p className="text-xs font-bold text-white/80">{differenceInDays(cycleEnd, startOfDay(now))} Hari</p>
-                        </div>
-                    </div>
-
-                    <p className="text-[10px] text-white/60 italic leading-relaxed">
-                        *Kecepatan belanja Anda saat ini adalah Rp {Math.floor(velocity).toLocaleString("id-ID")}/hari.
-                        Anda perlu berhemat agar tidak kehabisan dana.
-                    </p>
-                </motion.div>
-            )}
-
-            {/* Professional Forecasting & Savings Section */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-white/40 mb-1">
-                        <TrendingUp size={14} />
-                        <p className="text-[10px] uppercase tracking-wider font-semibold">Forecast Akhir Bulan</p>
-                    </div>
-                    <p className={`text-xl font-bold ${isForecastPositive ? 'text-white/90' : 'text-red-400'}`}>
-                        Rp {Math.floor(predictedBalance).toLocaleString("id-ID")}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1">
-                        <div className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase ${isForecastPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                            {isForecastPositive ? 'Aman' : 'Overbudget'}
-                        </div>
-                        <p className="text-[10px] text-white/30">Hingga Tgl 3</p>
                     </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-white/10 to-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-white/40 mb-1">
-                        <Landmark size={14} />
-                        <p className="text-[10px] uppercase tracking-wider font-semibold">Tabungan (Dana Darurat)</p>
-                    </div>
-                    <p className="text-xl font-bold text-white/90">
-                        Rp {(data.savingsBalance || 0).toLocaleString("id-ID")}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-1">
-                        <div className="px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase bg-blue-500/20 text-blue-400">
-                            Professional Goal
-                        </div>
-                        <p className="text-[10px] text-white/30">Pemisahan Dana</p>
-                    </div>
-                </div>
-            </div>
-
-            <div className="h-px bg-white/5" />
-
-            {/* Weekly Breakdown Section */}
-            <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                    <p className="text-xs font-medium text-white/60 uppercase tracking-wider">Weekly Spending Breakdown</p>
-                </div>
-
-                <div className="h-[150px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={weeklyBreakdownData}>
-                            <XAxis
-                                dataKey="name"
-                                stroke="rgba(255,255,255,0.2)"
-                                fontSize={10}
-                                tickLine={false}
-                                axisLine={false}
-                            />
-                            <Tooltip
-                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                                content={({ active, payload }) => {
-                                    if (active && payload && payload.length) {
-                                        const weekIdx = weeklyBreakdownData.findIndex(d => d.name === payload[0].payload.name);
-                                        const week = weeks[weekIdx];
-                                        return (
-                                            <div className="bg-[#1A1A24] border border-white/10 p-3 rounded-xl shadow-xl">
-                                                <p className="text-[10px] text-white/40 mb-1">{format(week.start, "MMM d")} - {format(week.end, "MMM d")}</p>
-                                                <p className="text-sm font-bold text-white">Rp {payload[0].value?.toLocaleString("id-ID")}</p>
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                }}
-                            />
-                            <Bar
-                                dataKey="amount"
-                                radius={[6, 6, 0, 0]}
-                                onClick={(data: any, index: number) => setExpandedWeek(expandedWeek === index ? null : index)}
-                            >
-                                {weeklyBreakdownData.map((entry, index) => (
-                                    <Cell
-                                        key={`cell-${index}`}
-                                        fill={entry.isCurrent ? "#7C5CFF" : "rgba(124, 92, 255, 0.3)"}
-                                        className="cursor-pointer hover:opacity-80 transition-opacity"
-                                    />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-
-                <div className="grid grid-cols-1 gap-2">
-                    {weeks.map((week, idx) => (
-                        <div key={idx} className="bg-white/5 border border-white/10 rounded-2xl overflow-hidden transition-all">
-                            <button
-                                onClick={() => setExpandedWeek(expandedWeek === idx ? null : idx)}
-                                className="w-full flex items-center justify-between p-3 hover:bg-white/5 transition-colors"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className={`w-1.5 h-1.5 rounded-full ${week.isCurrent ? 'bg-[#7C5CFF] shadow-[0_0_8px_#7C5CFF]' : 'bg-white/20'}`} />
-                                    <div className="text-left">
-                                        <p className="text-xs font-medium text-white/90">{week.label}</p>
-                                        <p className="text-[10px] text-white/40">{format(week.start, "d MMM")} - {format(week.end, "d MMM")}</p>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <p className="text-xs font-semibold text-white/80">Rp {week.total.toLocaleString("id-ID")}</p>
-                                    {expandedWeek === idx ? <ChevronDown size={14} className="text-white/40" /> : <ChevronRight size={14} className="text-white/40" />}
-                                </div>
-                            </button>
-
-                            {expandedWeek === idx && (
-                                <motion.div
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: "auto", opacity: 1 }}
-                                    className="px-3 pb-3 pt-1 border-t border-white/5 space-y-2"
-                                >
-                                    {week.categories.length > 0 ? (
-                                        week.categories.map((cat, i) => (
-                                            <div key={i} className="flex items-center justify-between">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: getCategoryColor(cat.name).bg }} />
-                                                    <p className="text-[10px] text-white/60">{cat.name}</p>
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+                    <p className="text-[10px] font-bold text-white/30 uppercase tracking-widest mb-4">Weekly Pacing</p>
+                    <div className="h-[120px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={weeks.map(w => ({ name: w.label, amount: w.total }))}>
+                                <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
+                                    {weeks.map((w, index) => (
+                                        <Cell key={`cell-${index}`} fill={w.isCurrent ? "#7C5CFF" : "rgba(255,255,255,0.1)"} />
+                                    ))}
+                                </Bar>
+                                <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={9} stroke="rgba(255,255,255,0.3)" />
+                                <Tooltip
+                                    cursor={{ fill: "transparent" }}
+                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                    content={({ active, payload }: any) => {
+                                        if (active && payload && payload.length) {
+                                            return (
+                                                <div className="bg-[#1A1A2E] border border-white/10 p-2 rounded-xl shadow-xl">
+                                                    <p className="text-[10px] font-bold text-white">Rp {payload[0].value.toLocaleString("id-ID")}</p>
                                                 </div>
-                                                <p className="text-[10px] font-medium text-white/80">Rp {cat.amount.toLocaleString("id-ID")}</p>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <p className="text-[10px] text-white/30 text-center py-1">No transactions this week</p>
-                                    )}
-                                </motion.div>
-                            )}
+                                            );
+                                        }
+                                        return null;
+                                    }}
+                                />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            </div>
+
+            {/* Heatmap Section */}
+            <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest">Pola Belanja Harian</p>
+                    <p className="text-[10px] text-white/20">Berdasarkan data historismu</p>
+                </div>
+                <div className="grid grid-cols-7 gap-2">
+                    {DAY_LABELS.map((label, idx) => (
+                        <div key={idx} className="flex flex-col items-center gap-2">
+                            <div className={`w-full aspect-square rounded-xl border flex items-center justify-center transition-all ${idx === todayIdx ? "border-[#7C5CFF]" : "border-transparent"}`}
+                                style={{ backgroundColor: getHeatColor(idx) }}>
+                                {idx === todayIdx && <div className="w-1.5 h-1.5 rounded-full bg-[#B983FF] shadow-[0_0_8px_#B983FF]" />}
+                            </div>
+                            <p className={`text-[10px] font-bold ${idx === todayIdx ? "text-[#B983FF]" : "text-white/20"}`}>{label}</p>
                         </div>
                     ))}
                 </div>
             </div>
 
-            <div className="h-px bg-white/5" />
+            {/* Recovery Plan (Conditional) */}
+            {recoveryPlan && (
+                <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+                    className="bg-orange-500/10 border border-orange-500/30 rounded-3xl p-6 flex flex-col gap-4">
+                    <div className="flex items-center gap-2 text-orange-400">
+                        <AlertCircle size={16} />
+                        <p className="text-sm font-bold uppercase tracking-wider">Adjustment Suggestion (Recovery Plan)</p>
+                    </div>
+                    <p className="text-[12px] text-white/70 leading-relaxed">
+                        Untuk menjaga saldo tetap aman hingga akhir bulan (buffer Rp 500rb), sistem menyarankan penyesuaian gaya belanja:
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div className="bg-black/20 rounded-2xl p-4 flex flex-col gap-1 border border-white/5">
+                            <p className="text-[9px] text-white/30 uppercase font-bold">Target Baru</p>
+                            <p className="text-sm font-bold text-white">Rp {recoveryPlan.safeDailyLimit.toLocaleString("id-ID")}/hr</p>
+                        </div>
+                        <div className="bg-black/20 rounded-2xl p-4 flex flex-col gap-1 border border-white/5">
+                            <p className="text-[10px] text-white/30 uppercase font-bold">Kurangi Kategori</p>
+                            <p className="text-[12px] font-bold text-orange-400">{recoveryPlan.topCategoryToReduce}</p>
+                        </div>
+                        <div className="bg-black/20 rounded-2xl p-4 flex flex-col gap-1 border border-white/5 hidden md:flex">
+                            <p className="text-[10px] text-white/30 uppercase font-bold">Sisa Hari</p>
+                            <p className="text-[12px] font-bold text-white">{recoveryPlan.daysRemaining} Hari</p>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
 
-            {/* Charts */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Pie Chart */}
-                <div className="h-[200px] relative">
-                    <p className="text-xs text-white/50 text-center mb-2">Spending by Category</p>
-                    <ResponsiveContainer width="100%" height="80%">
-                        <PieChart>
-                            <Pie
-                                data={pieData}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={50}
-                                outerRadius={70}
-                                paddingAngle={5}
-                                dataKey="value"
-                                stroke="none"
-                            >
-                                {pieData.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                ))}
-                            </Pie>
-                            <Tooltip
-                                formatter={(value: number | undefined) => value ? `Rp ${value.toLocaleString("id-ID")}` : ""}
-                                contentStyle={{ backgroundColor: "#1A1A24", borderColor: "rgba(255,255,255,0.1)", borderRadius: "12px", fontSize: "12px" }}
-                                itemStyle={{ color: "#fff" }}
-                            />
-                        </PieChart>
-                    </ResponsiveContainer>
+            {/* Recent Anomalies */}
+            {anomalies.length > 0 && (
+                <div className="bg-white/5 border border-white/10 rounded-3xl p-6">
+                    <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">Anomali Terdeteksi ({anomalies.length})</p>
+                    <div className="space-y-2">
+                        {anomalies.slice(0, 3).map((a, i) => (
+                            <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-2xl border border-white/5">
+                                <div className="space-y-0.5">
+                                    <p className="text-[11px] font-bold text-white/90">{a.transaction.category}</p>
+                                    <p className="text-[10px] text-white/30">{format(parseISO(a.transaction.date), "dd MMM yyyy")}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[11px] font-bold text-orange-400">Rp {a.transaction.amount.toLocaleString("id-ID")}</p>
+                                    <p className="text-[9px] text-white/20">{a.medianRatio.toFixed(1)}x dari biasanya</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
-
-                {/* Bar Chart */}
-                <div className="h-[200px] relative">
-                    <p className="text-xs text-white/50 text-center mb-2">Last 7 Days</p>
-                    <ResponsiveContainer width="100%" height="80%">
-                        <BarChart data={last7Days}>
-                            <XAxis dataKey="displayDate" stroke="rgba(255,255,255,0.2)" fontSize={10} tickLine={false} axisLine={false} />
-                            <Tooltip
-                                cursor={{ fill: "rgba(255,255,255,0.05)" }}
-                                formatter={(value: number | undefined) => value ? `Rp ${value.toLocaleString("id-ID")}` : ""}
-                                contentStyle={{ backgroundColor: "#1A1A24", borderColor: "rgba(255,255,255,0.1)", borderRadius: "12px", fontSize: "12px" }}
-                                itemStyle={{ color: "#fff" }}
-                            />
-                            <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
-                                {last7Days.map((entry, index) => (
-                                    <Cell key={`cell-${index}`} fill={entry.amount > 0 ? "url(#colorUv)" : "transparent"} />
-                                ))}
-                            </Bar>
-                            <defs>
-                                <linearGradient id="colorUv" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#7C5CFF" stopOpacity={0.8} />
-                                    <stop offset="95%" stopColor="#B983FF" stopOpacity={0.2} />
-                                </linearGradient>
-                            </defs>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-            </div>
+            )}
         </motion.div>
     );
 }

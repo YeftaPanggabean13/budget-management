@@ -23,6 +23,21 @@ export type RecurringExpense = {
     dayOfMonth: number;
 };
 
+/**
+ * Snapshot of a completed pay cycle, archived before each monthly reset.
+ * Stored in a separate localStorage key so it survives resetData().
+ */
+export type HistoricalCycle = {
+    cycleStart: string;
+    cycleEnd: string;
+    totalSpent: number;
+    averageDailySpend: number;
+    topCategories: { category: string; amount: number }[];
+    finalBalance: number;
+    userProfile: "conservative" | "balanced" | "aggressive";
+    burnRate: number;
+};
+
 export type FinanceData = {
     balance: number;
     initialBalance: number;
@@ -33,6 +48,8 @@ export type FinanceData = {
     lastResetDate: string;
     savingsBalance: number;
     emergencyFundGoal: number;
+    /** Per-cycle snapshots — lives in finance-data AND separately in finance-history */
+    historicalCycles: HistoricalCycle[];
 };
 
 export type FinanceContextType = {
@@ -75,13 +92,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
                 setData({
                     balance: parsed.balance ?? 0,
                     initialBalance: parsed.initialBalance ?? parsed.balance ?? 0,
-                    weeklyBudgetTarget: parsed.weeklyBudgetTarget ?? Math.floor((parsed.initialBalance ?? 0) / 4),
+                    weeklyBudgetTarget: parsed.weeklyBudgetTarget ?? Math.floor((parsed.initialBalance ?? 0) / 4.33),
                     transactions: transactions,
                     categoryBudgets: parsed.categoryBudgets ?? [],
                     recurringExpenses: parsed.recurringExpenses ?? [],
                     lastResetDate: parsed.lastResetDate ?? new Date().toISOString(),
                     savingsBalance: parsed.savingsBalance ?? 0,
                     emergencyFundGoal: parsed.emergencyFundGoal ?? 0,
+                    historicalCycles: parsed.historicalCycles ?? [],
                 });
             } catch (e) {
                 console.error("Failed to parse finance data", e);
@@ -115,7 +133,63 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
             const newTransactions = [...prev.transactions];
             const now = new Date();
 
-            // Deduct recurring expenses
+            // ── Archive closing cycle before reset ──────────────────────────
+            const cycleTransactions = prev.transactions.filter((tx) => {
+                const d = new Date(tx.date);
+                return d >= new Date(prev.lastResetDate) && d <= now;
+            });
+            const totalSpent = cycleTransactions.reduce((s, tx) => s + tx.amount, 0);
+            const daysInCycle = Math.max(
+                1,
+                Math.round(
+                    (now.getTime() - new Date(prev.lastResetDate).getTime()) /
+                    (1000 * 60 * 60 * 24)
+                )
+            );
+            const categoryTotals: Record<string, number> = {};
+            cycleTransactions.forEach((tx) => {
+                categoryTotals[tx.category] =
+                    (categoryTotals[tx.category] ?? 0) + tx.amount;
+            });
+            const topCategories = Object.entries(categoryTotals)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3)
+                .map(([category, amount]) => ({ category, amount }));
+            const expectedSpent = prev.initialBalance;
+            const burnRate =
+                expectedSpent > 0 ? totalSpent / expectedSpent : 1;
+            const userProfile: HistoricalCycle["userProfile"] =
+                burnRate < 0.8
+                    ? "conservative"
+                    : burnRate <= 1.15
+                    ? "balanced"
+                    : "aggressive";
+
+            const snapshot: HistoricalCycle = {
+                cycleStart: prev.lastResetDate,
+                cycleEnd: now.toISOString(),
+                totalSpent,
+                averageDailySpend: Math.floor(totalSpent / daysInCycle),
+                topCategories,
+                finalBalance: prev.balance,
+                userProfile,
+                burnRate: parseFloat(burnRate.toFixed(2)),
+            };
+
+            // Persist to separate key so it survives resetData()
+            try {
+                const existing = JSON.parse(
+                    localStorage.getItem("finance-history") ?? "[]"
+                ) as HistoricalCycle[];
+                localStorage.setItem(
+                    "finance-history",
+                    JSON.stringify([snapshot, ...existing].slice(0, 24)) // keep last 24 cycles
+                );
+            } catch {
+                // ignore storage errors
+            }
+
+            // ── Apply recurring expenses to new cycle ────────────────────────
             prev.recurringExpenses.forEach((exp) => {
                 if (newBalance >= exp.amount) {
                     newBalance -= exp.amount;
@@ -132,7 +206,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
                 ...prev,
                 balance: newBalance,
                 transactions: newTransactions,
-                lastResetDate: new Date().toISOString()
+                lastResetDate: now.toISOString(),
+                historicalCycles: [snapshot, ...prev.historicalCycles].slice(0, 24),
             };
         });
     };
@@ -148,6 +223,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
             lastResetDate: new Date().toISOString(),
             savingsBalance: 0,
             emergencyFundGoal: 0,
+            historicalCycles: [],
         });
     };
 
@@ -259,6 +335,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     };
 
     const resetData = () => {
+        // Intentionally keeps "finance-history" so historical cycles survive a reset
         localStorage.removeItem("finance-data");
         setData(null);
     };
